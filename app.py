@@ -35,6 +35,7 @@ class App(ctk.CTk):
         self.hash_table: Optional[HashTable] = None
         self.recommender: Optional[RecommenderSystem] = None
         self.selected_strategy = "Separate Chaining"
+        self.experiment_mode = "Reproducible Experiment"
         
         # Create UI layout
         self.setup_ui()
@@ -55,11 +56,22 @@ class App(ctk.CTk):
         
         # Title Header
         self.app_title = ctk.CTkLabel(self.sidebar_frame, text="SIMULATOR CONTROLS", font=ctk.CTkFont(size=16, weight="bold"))
-        self.app_title.pack(pady=(20, 15), padx=20, anchor="w")
+        self.app_title.pack(pady=(20, 10), padx=20, anchor="w")
         
+        # Mode Selection
+        self.mode_label = ctk.CTkLabel(self.sidebar_frame, text="Experiment Mode:", font=ctk.CTkFont(size=12, weight="bold"))
+        self.mode_label.pack(padx=20, pady=(5, 3), anchor="w")
+        self.mode_segmented = ctk.CTkSegmentedButton(
+            self.sidebar_frame,
+            values=["Reproducible Experiment", "Fresh Random Dataset"],
+            command=self.on_mode_change
+        )
+        self.mode_segmented.set("Reproducible Experiment")
+        self.mode_segmented.pack(padx=20, pady=(0, 12), fill="x")
+
         # 1. Dataset Size Selection
         self.ds_label = ctk.CTkLabel(self.sidebar_frame, text="Dataset Size (Number of Users):", font=ctk.CTkFont(size=12, weight="bold"))
-        self.ds_label.pack(padx=20, pady=(10, 5), anchor="w")
+        self.ds_label.pack(padx=20, pady=(5, 5), anchor="w")
         self.ds_option = ctk.CTkOptionMenu(self.sidebar_frame, values=["10", "50", "100", "500", "1000"], command=self.on_dataset_size_change)
         self.ds_option.set("100")
         self.ds_option.pack(padx=20, pady=(0, 15), fill="x")
@@ -137,6 +149,9 @@ class App(ctk.CTk):
         
         self.btn_numpy = ctk.CTkButton(self.btn_scroll, text="Compare NumPy", command=self.click_compare_numpy)
         self.btn_numpy.pack(pady=5, fill="x")
+        
+        self.btn_week6 = ctk.CTkButton(self.btn_scroll, text="Week 6: Cosine Recs", fg_color="#1565C0", hover_color="#0D47A1", command=self.click_run_week6)
+        self.btn_week6.pack(pady=5, fill="x")
         
         self.btn_visualize = ctk.CTkButton(self.btn_scroll, text="Show Hash Table", command=self.click_show_hash_table)
         self.btn_visualize.pack(pady=5, fill="x")
@@ -285,6 +300,13 @@ class App(ctk.CTk):
             self.stats_labels["Avg Bucket Len:"].configure(text=f"{stats['avg_bucket_length']:.2f}")
             self.stats_labels["Max Bucket Len:"].configure(text=str(stats["max_bucket_length"]))
 
+    def on_mode_change(self, choice):
+        self.experiment_mode = choice
+        if choice == "Reproducible Experiment":
+            self.write_console("\n[MODE A: Reproducible Experiment] Fixed seed (42) enabled for standard academic comparison.")
+        else:
+            self.write_console("\n[MODE B: Fresh Random Dataset] Dynamic seed enabled. Each click on 'Generate Dataset' will produce a new dataset.")
+
     def on_strategy_change(self, choice):
         self.selected_strategy = choice
         self.write_console(f"Collision strategy changed to {choice}.")
@@ -311,9 +333,11 @@ class App(ctk.CTk):
     # --- SIMULATOR ACTIONS ---
     
     def click_generate_dataset(self):
-        self.dataset = generate_user_data(self.dataset_size)
+        seed = 42 if self.experiment_mode == "Reproducible Experiment" else None
+        self.dataset = generate_user_data(self.dataset_size, seed=seed)
         formatted_txt = format_first_n_users(self.dataset, 10)
-        self.write_console("\n" + "="*45 + "\nDataset Generated Successfully!\n" + "="*45, clear=True)
+        mode_str = "MODE A: Reproducible Experiment (Seed 42)" if seed == 42 else "MODE B: Fresh Random Dataset (Dynamic Seed)"
+        self.write_console(f"\n" + "="*55 + f"\nDataset Generated Successfully! [{mode_str}]\n" + "="*55, clear=True)
         self.write_console(formatted_txt)
         
     def click_insert_table(self):
@@ -373,7 +397,7 @@ class App(ctk.CTk):
                 # Insert the remaining dataset
                 for user_id, movies in self.dataset[1:]:
                     self.hash_table.insert(user_id, movies)
-                self.recommender.fit(self.dataset)
+                self.recommender.fit(self.dataset, movie_vocab=list(range(1, 101)))
                 
                 self.write_console(f"Successfully inserted all {len(self.dataset)} users into Hash Table.")
                 self.update_stats_ui()
@@ -483,6 +507,88 @@ class App(ctk.CTk):
             f"- NumPy array manipulation uses highly optimized C routines (vectorized bincount).\n"
             f"- Python lists require traversing and updating elements one-by-one in python runtime memory."
         )
+
+    def click_run_week6(self):
+        is_reproducible = (self.experiment_mode == "Reproducible Experiment")
+        mode_title = "MODE A — REPRODUCIBLE WEEK 6 EXPERIMENT" if is_reproducible else "MODE B — FRESH DATA DEMO"
+        
+        if not self.dataset or not self.recommender:
+            seed = 42 if is_reproducible else None
+            self.write_console("\n" + "="*70)
+            self.write_console(f"Running {mode_title} (Standalone N=500, M=100)...")
+            self.write_console("="*70)
+            self.update()
+            res = PerformanceSimulator.run_week6_experiment(500, 100, top_n=5, seed=seed, mode_label=mode_title)
+            self.write_console(f"\n--- {mode_title} Completed ---")
+            self.write_console(f"Avg Baseline Time: {res['avg_baseline_time_sec']*1000:.4f} ms")
+            self.write_console(f"Avg Cosine Time:   {res['avg_cosine_time_sec']*1000:.4f} ms")
+            self.write_console(f"  * Hash Lookup:       {res['avg_lookup_time_sec']*1000:.4f} ms")
+            self.write_console(f"  * Similarity Calc:   {res['avg_sim_calc_time_sec']*1000:.4f} ms")
+            self.write_console(f"  * Rec Generation:    {res['avg_gen_time_sec']*1000:.4f} ms")
+            self.write_console(f"Avg Top Similar User Score: {res['avg_max_similarity']:.4f}\n")
+            return
+
+        n_users = len(self.dataset)
+        self.write_console("\n" + "="*70)
+        self.write_console(f"{mode_title} (CURRENT HASH TABLE - {n_users} Users)")
+        self.write_console("="*70)
+        self.update()
+
+        # Benchmark currently loaded users
+        baseline_times = []
+        cosine_times = []
+        sim_calc_times = []
+        lookup_times = []
+        gen_times = []
+        all_top_sim_scores = []
+        user_ids = [uid for uid, _ in self.dataset]
+
+        for uid in user_ids:
+            b_recs, b_timing, _ = self.recommender.recommend_movies_baseline(uid, top_n=5)
+            c_recs, c_timing, c_neighbors, _ = self.recommender.recommend_movies_cosine(uid, top_n=5, top_k_users=10)
+            baseline_times.append(b_timing["total_time"])
+            cosine_times.append(c_timing["total_time"])
+            sim_calc_times.append(c_timing["similarity_calc_time"])
+            lookup_times.append(c_timing["hash_lookup_time"])
+            gen_times.append(c_timing["rec_gen_time"])
+            if c_neighbors:
+                all_top_sim_scores.append(c_neighbors[0][1])
+
+        # Pick 3 representative users from the CURRENT dataset
+        sample_indices = [0, n_users // 2, n_users - 1] if n_users >= 3 else list(range(n_users))
+        sample_indices = list(dict.fromkeys(sample_indices))
+
+        label_context = "Same 3 Benchmark Users" if is_reproducible else "3 Newly Sampled Users"
+        self.write_console(f"\n--- Evaluation of {label_context} ---")
+        self.write_console("-" * 70)
+        for idx in sample_indices:
+            target_uid, original_prefs = self.dataset[idx]
+            b_recs, b_timing, _ = self.recommender.recommend_movies_baseline(target_uid, top_n=5)
+            c_recs, c_timing, c_neighbors, _ = self.recommender.recommend_movies_cosine(target_uid, top_n=5, top_k_users=10)
+            
+            self.write_console(f"User ID: {target_uid} (Visible in Hash Table)")
+            self.write_console(f"  Original Preferences:     {original_prefs}")
+            self.write_console(f"  Baseline Recommendations: {b_recs} ({b_timing['total_time']*1000:.3f} ms)")
+            self.write_console(f"  Cosine Recommendations:   {c_recs} ({c_timing['total_time']*1000:.3f} ms)")
+            top_neighbors_info = [f"User {u[0]} (sim: {u[1]:.4f})" for u in c_neighbors[:5]]
+            self.write_console(f"  Top Similar Neighbors:    {top_neighbors_info}")
+            self.write_console("-" * 70)
+
+        avg_base = float(np.mean(baseline_times))
+        avg_cos = float(np.mean(cosine_times))
+        avg_lookup = float(np.mean(lookup_times))
+        avg_sim = float(np.mean(sim_calc_times))
+        avg_gen = float(np.mean(gen_times))
+        avg_max_sim = float(np.mean(all_top_sim_scores)) if all_top_sim_scores else 0.0
+
+        self.write_console(f"\nSummary for Current Dataset ({mode_title}, N={n_users} Users):")
+        self.write_console(f"  Avg Baseline Time:  {avg_base*1000:.4f} ms")
+        self.write_console(f"  Avg Cosine Time:    {avg_cos*1000:.4f} ms")
+        self.write_console(f"    * Hash Lookup:      {avg_lookup*1000:.4f} ms")
+        self.write_console(f"    * Similarity Calc:  {avg_sim*1000:.4f} ms")
+        self.write_console(f"    * Rec Generation:   {avg_gen*1000:.4f} ms")
+        self.write_console(f"  Avg Top Similar User Score: {avg_max_sim:.4f}")
+        self.write_console("="*70 + "\n")
 
     def click_show_hash_table(self):
         if not self.hash_table:
@@ -594,6 +700,12 @@ class App(ctk.CTk):
                     if step["found"]:
                         self.anim_text.configure(text=f"SUCCESS: Found User ID {search_key}!\nMovies liked: {step['value']}", text_color="#2E7D32")
                         self.write_console(f"Search Success: User {search_key} prefers movies: {step['value']}")
+                        if self.recommender:
+                            b_recs, b_t, _ = self.recommender.recommend_movies_baseline(search_key, top_n=3)
+                            c_recs, c_t, c_sims, _ = self.recommender.recommend_movies_cosine(search_key, top_n=3)
+                            top_sim_info = f", Top Neighbor: {c_sims[0][0]} ({c_sims[0][1]:.2f})" if c_sims else ""
+                            self.write_console(f"  * Baseline Recs: {b_recs} (Total: {b_t['total_time']*1000:.3f} ms)")
+                            self.write_console(f"  * Cosine Recs:   {c_recs} (Total: {c_t['total_time']*1000:.3f} ms{top_sim_info})")
                     else:
                         self.anim_text.configure(text=f"FAILURE: User ID {search_key} not present in hash table.", text_color="#C62828")
                         self.write_console(f"Search Failure: User {search_key} not found.")
