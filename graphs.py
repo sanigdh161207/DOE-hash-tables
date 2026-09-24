@@ -5,13 +5,13 @@ import numpy as np
 from typing import List, Tuple, Dict, Union
 
 # Custom styling to match application dark mode
-DARK_BACKGROUND = "#1A1A1A"
-CARD_BACKGROUND = "#242424"
-PRIMARY_BLUE = "#1F6AA5"
-SECONDARY_RED = "#D62728"   # Red accent for Linear Probing comparison
-SECONDARY_ACCENT = "#FF7F0E" # Orange for highlights
-TEXT_COLOR = "#E0E0E0"
-GRID_COLOR = "#333333"
+DARK_BACKGROUND = "#0F1117"
+CARD_BACKGROUND = "#181B26"
+PRIMARY_BLUE = "#6366F1"
+SECONDARY_RED = "#F43F5E"   # Red accent for Linear Probing comparison
+SECONDARY_ACCENT = "#00E5FF" # Cyan/amber for highlights
+TEXT_COLOR = "#E2E8F0"
+GRID_COLOR = "#2A3045"
 
 def setup_plot_style(ax, title: str, xlabel: str, ylabel: str):
     """
@@ -45,7 +45,9 @@ def plot_lookup_benchmark(data: Union[List[Tuple[int, float, int, int]], Dict[st
             ax.plot(sizes, times_us, marker="o", color=color, linewidth=2.0, markersize=5, label=strat)
             if times_us:
                 max_y = max(max_y, max(times_us))
-        ax.legend(facecolor=CARD_BACKGROUND, edgecolor=GRID_COLOR, labelcolor=TEXT_COLOR, fontsize=8)
+        leg = ax.legend(facecolor=CARD_BACKGROUND, edgecolor=GRID_COLOR, fontsize=8)
+        if leg:
+            plt.setp(leg.get_texts(), color=TEXT_COLOR)
         ax.set_ylim(0, max_y * 1.3)
     else:
         # Legacy list fallback
@@ -89,7 +91,9 @@ def plot_collision_experiment(data: Union[List[Tuple[float, float, float]], Dict
                             
         ax.set_xticks(x)
         ax.set_xticklabels(lf_keys)
-        ax.legend(facecolor=CARD_BACKGROUND, edgecolor=GRID_COLOR, labelcolor=TEXT_COLOR, fontsize=8)
+        leg = ax.legend(facecolor=CARD_BACKGROUND, edgecolor=GRID_COLOR, fontsize=8)
+        if leg:
+            plt.setp(leg.get_texts(), color=TEXT_COLOR)
         
         all_rates = []
         for s in strats:
@@ -130,7 +134,9 @@ def plot_load_factor_vs_lookup_time(data: Dict[str, List[Tuple[float, float, flo
         if times_us:
             max_y = max(max_y, max(times_us))
             
-    ax.legend(facecolor=CARD_BACKGROUND, edgecolor=GRID_COLOR, labelcolor=TEXT_COLOR, fontsize=8)
+    leg = ax.legend(facecolor=CARD_BACKGROUND, edgecolor=GRID_COLOR, fontsize=8)
+    if leg:
+        plt.setp(leg.get_texts(), color=TEXT_COLOR)
     ax.set_ylim(0, max_y * 1.3)
     
     fig.tight_layout()

@@ -172,11 +172,11 @@ class PerformanceSimulator:
         mode_label: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Executes Week 6 experiment comparing Baseline (Random) vs Cosine Similarity Recommendations:
+        Executes experiment comparing Baseline (Random) vs Cosine Similarity Recommendations:
         - Exactly num_users (default 500) and num_movies (default 100).
         - Same generated dataset for both methods.
         - Supports:
-            * MODE A: Reproducible Week 6 Experiment (seed=42, fixed users [1912, 2751, 2440])
+            * MODE A: Reproducible Cosine Experiment (seed=42, fixed users [1912, 2751, 2440])
             * MODE B: Fresh Data Demo (seed=None, freshly generated users)
         - Measures:
             * recommendation time (total, hash lookup, similarity calc, rec gen)
@@ -188,7 +188,7 @@ class PerformanceSimulator:
             test_user_indices = [0, num_users // 2, num_users - 1]
 
         if mode_label is None:
-            mode_label = "MODE A — REPRODUCIBLE WEEK 6 EXPERIMENT (Seed: 42)" if seed is not None else "MODE B — FRESH DATA DEMO (Dynamic Seed)"
+            mode_label = "MODE A — REPRODUCIBLE EXPERIMENT (Seed: 42)" if seed is not None else "MODE B — FRESH DATA DEMO (Dynamic Seed)"
 
         # 1. Generate single shared dataset
         dataset = generate_user_data(num_users, num_movies, seed=seed)
@@ -232,7 +232,7 @@ class PerformanceSimulator:
         # 4. Detailed Evaluation for 3 Predefined Test Users
         test_users_results = []
         print("\n" + "=" * 80)
-        print(f"WEEK 6 EXPERIMENT: {mode_label}")
+        print(f"COSINE SIMILARITY EXPERIMENT: {mode_label}")
         print("EVALUATION OF THREE TEST USERS")
         print("=" * 80)
         

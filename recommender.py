@@ -396,7 +396,7 @@ def cosine_similarity(vector_a: Any, vector_b: Any) -> float:
 
 class RecommenderSystem:
     """
-    Recommender System supporting both random baseline and Week 6 Cosine Similarity
+    Recommender System supporting both random baseline and Cosine Similarity
     collaborative filtering using custom Hash Table backend storage.
     """
     def __init__(self, table_size: int = 10, strategy_class = HashTableChaining):
