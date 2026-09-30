@@ -1,2 +1,2 @@
 num_users,test_queries,brute_force_time_sec,inverted_index_time_sec,speedup_factor,recommendations_identical
-1000,50,1.931393,0.869113,2.22,True
+100,50,0.202227,0.149585,1.35,True

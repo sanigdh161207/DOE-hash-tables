@@ -4,6 +4,7 @@ import customtkinter as ctk
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import time
+import datetime
 import random
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -18,6 +19,76 @@ import graphs
 # Set appearance mode and color theme
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
+
+# ── Theme Color Palettes ──
+THEME_DARK = {
+    "name": "dark",
+    "sidebar_bg": "#18181C",
+    "main_bg": "#121215",
+    "card_bg": "#1A1A1E",
+    "card_inner": "#202025",
+    "card_alt": "#18181C",
+    "separator": "#2A2A32",
+    "accent": "#00E5FF",
+    "btn_primary": "#1F6AA5",
+    "btn_success": "#2E7D32",
+    "btn_success_hover": "#1B5E20",
+    "btn_danger": "#C62828",
+    "btn_danger_hover": "#B71C1C",
+    "text_primary": "#E0E0E0",
+    "text_secondary": "#A0A0A0",
+    "text_muted": "#666666",
+    "border": "#333333",
+    "console_bg": "#0D0E12",
+    "console_header": "#18181C",
+    "console_border": "#282932",
+    "console_btn_bg": "#252733",
+    "console_btn_hover": "#353846",
+    "tag_text": "#D6DEEB",
+    "tag_time": "#637777",
+    "tag_header": "#00E5FF",
+    "tag_success": "#00E676",
+    "tag_error": "#FF5252",
+    "tag_metric": "#FFD54F",
+    "tag_step": "#B388FF",
+    "pill_bg": "#2A2A32",
+    "empty_pill_bg": "#202025",
+}
+
+THEME_LIGHT = {
+    "name": "light",
+    "sidebar_bg": "#F0F2F5",
+    "main_bg": "#FFFFFF",
+    "card_bg": "#F7F8FA",
+    "card_inner": "#EBEDF0",
+    "card_alt": "#F0F2F5",
+    "separator": "#D0D5DD",
+    "accent": "#0077B6",
+    "btn_primary": "#1565C0",
+    "btn_success": "#2E7D32",
+    "btn_success_hover": "#1B5E20",
+    "btn_danger": "#C62828",
+    "btn_danger_hover": "#B71C1C",
+    "text_primary": "#1A1A1A",
+    "text_secondary": "#555555",
+    "text_muted": "#999999",
+    "border": "#C0C6D0",
+    "console_bg": "#F8FAFC",
+    "console_header": "#EDF2F7",
+    "console_border": "#CBD5E1",
+    "console_btn_bg": "#E2E8F0",
+    "console_btn_hover": "#CBD5E1",
+    "tag_text": "#1E293B",
+    "tag_time": "#64748B",
+    "tag_header": "#0284C7",
+    "tag_success": "#16A34A",
+    "tag_error": "#DC2626",
+    "tag_metric": "#D97706",
+    "tag_step": "#7C3AED",
+    "pill_bg": "#E3E8EF",
+    "empty_pill_bg": "#EBEDF0",
+}
+
 
 class App(ctk.CTk):
     def __init__(self):
@@ -39,6 +110,7 @@ class App(ctk.CTk):
         self.sparse_recommender: Optional[SparseRecommender] = None
         self.selected_strategy = "Separate Chaining"
         self.rec_mode = "IDF-Weighted Cosine"
+        self.current_theme = THEME_DARK
         
         # Build UI layout
         self.setup_ui()
@@ -60,14 +132,37 @@ class App(ctk.CTk):
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
         self.sidebar_frame.grid_propagate(False)
         
-        # App Header
+        # App Header row with title + theme toggle
+        self.header_row = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
+        self.header_row.pack(fill="x", padx=20, pady=(15, 5))
+
         self.app_title = ctk.CTkLabel(
-            self.sidebar_frame,
+            self.header_row,
             text="SIMULATOR CONTROLS",
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color="#00E5FF"
         )
-        self.app_title.pack(pady=(20, 10), padx=20, anchor="w")
+        self.app_title.pack(side="left", anchor="w")
+
+        # Light / Dark mode toggle
+        self.theme_switch_var = ctk.StringVar(value="dark")
+        self.theme_label = ctk.CTkLabel(
+            self.header_row, text="☀",
+            font=ctk.CTkFont(size=14), text_color="#FFD54F"
+        )
+        self.theme_label.pack(side="right", padx=(4, 0))
+        self.theme_switch = ctk.CTkSwitch(
+            self.header_row, text="", width=40,
+            variable=self.theme_switch_var,
+            onvalue="dark", offvalue="light",
+            command=self.toggle_theme
+        )
+        self.theme_switch.pack(side="right", padx=4)
+        self.theme_label_dark = ctk.CTkLabel(
+            self.header_row, text="🌙",
+            font=ctk.CTkFont(size=14)
+        )
+        self.theme_label_dark.pack(side="right", padx=(0, 4))
         
         # 1. Dataset Configuration
         self.ds_label = ctk.CTkLabel(self.sidebar_frame, text="Dataset Size (Users):", font=ctk.CTkFont(size=11, weight="bold"))
@@ -279,24 +374,156 @@ class App(ctk.CTk):
             self.stats_labels[label_txt] = val_lbl
 
         # --- BOTTOM PANEL: OUTPUT CONSOLE LOG ---
-        self.console_frame = ctk.CTkFrame(self.right_frame, height=160, fg_color="#18181C")
+        self.console_line_count = 0
+        self.console_frame = ctk.CTkFrame(
+            self.right_frame, height=175, fg_color="#18181C",
+            corner_radius=8, border_width=1, border_color="#282932"
+        )
         self.console_frame.grid(row=2, column=0, sticky="nsew", padx=15, pady=(5, 15))
         self.console_frame.grid_propagate(False)
 
-        self.console_title = ctk.CTkLabel(self.console_frame, text="Output Console Log", font=ctk.CTkFont(size=12, weight="bold"))
-        self.console_title.pack(anchor="w", padx=10, pady=2)
+        # Console Header Toolbar
+        self.console_header = ctk.CTkFrame(self.console_frame, height=30, fg_color="transparent")
+        self.console_header.pack(fill="x", padx=10, pady=(6, 2))
 
-        self.console_textbox = ctk.CTkTextbox(self.console_frame, state="disabled", font=ctk.CTkFont(family="Courier", size=11), fg_color="#121215")
-        self.console_textbox.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        # Left Header: prompt icon, title, status indicator, line counter
+        self.console_left_header = ctk.CTkFrame(self.console_header, fg_color="transparent")
+        self.console_left_header.pack(side="left", fill="y")
+
+        self.console_prompt_lbl = ctk.CTkLabel(
+            self.console_left_header, text=">_",
+            font=ctk.CTkFont(family="Consolas", size=12, weight="bold"),
+            text_color="#00E5FF"
+        )
+        self.console_prompt_lbl.pack(side="left", padx=(0, 6))
+
+        self.console_title = ctk.CTkLabel(
+            self.console_left_header, text="OUTPUT CONSOLE & EXECUTION LOG",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#E0E0E0"
+        )
+        self.console_title.pack(side="left", padx=(0, 8))
+
+        self.console_live_dot = ctk.CTkLabel(
+            self.console_left_header, text="●",
+            font=ctk.CTkFont(size=10), text_color="#00E676"
+        )
+        self.console_live_dot.pack(side="left", padx=(0, 2))
+
+        self.console_status_lbl = ctk.CTkLabel(
+            self.console_left_header, text="LIVE",
+            font=ctk.CTkFont(size=9, weight="bold"),
+            text_color="#00E676"
+        )
+        self.console_status_lbl.pack(side="left", padx=(0, 10))
+
+        self.console_count_lbl = ctk.CTkLabel(
+            self.console_left_header, text="0 lines",
+            font=ctk.CTkFont(size=9),
+            text_color="#888888"
+        )
+        self.console_count_lbl.pack(side="left")
+
+        # Right Header: Action buttons (Copy, Clear)
+        self.console_right_header = ctk.CTkFrame(self.console_header, fg_color="transparent")
+        self.console_right_header.pack(side="right", fill="y")
+
+        self.btn_copy_console = ctk.CTkButton(
+            self.console_right_header, text="📋 Copy", width=62, height=22,
+            font=ctk.CTkFont(size=10, weight="bold"),
+            fg_color="#252733", hover_color="#353846",
+            command=self.copy_console
+        )
+        self.btn_copy_console.pack(side="right", padx=(4, 0))
+
+        self.btn_clear_console = ctk.CTkButton(
+            self.console_right_header, text="🗑 Clear", width=62, height=22,
+            font=ctk.CTkFont(size=10, weight="bold"),
+            fg_color="#252733", hover_color="#353846",
+            command=self.clear_console
+        )
+        self.btn_clear_console.pack(side="right", padx=(0, 4))
+
+        # Textbox with monospace syntax font
+        self.console_textbox = ctk.CTkTextbox(
+            self.console_frame, state="disabled",
+            font=ctk.CTkFont(family="Consolas", size=10),
+            fg_color="#0D0E12", corner_radius=6
+        )
+        self.console_textbox.pack(fill="both", expand=True, padx=8, pady=(2, 8))
+        self.configure_console_tags()
 
     # --- UI CALLBACKS & ACTIONS ---
+    def configure_console_tags(self):
+        t = self.current_theme
+        try:
+            tb = self.console_textbox._textbox
+            tb.tag_config("normal", foreground=t.get("tag_text", "#D6DEEB"))
+            tb.tag_config("time", foreground=t.get("tag_time", "#637777"))
+            tb.tag_config("header", foreground=t.get("tag_header", "#00E5FF"), font=("Consolas", 10, "bold"))
+            tb.tag_config("success", foreground=t.get("tag_success", "#00E676"), font=("Consolas", 10, "bold"))
+            tb.tag_config("error", foreground=t.get("tag_error", "#FF5252"), font=("Consolas", 10, "bold"))
+            tb.tag_config("metric", foreground=t.get("tag_metric", "#FFD54F"))
+            tb.tag_config("step", foreground=t.get("tag_step", "#B388FF"), font=("Consolas", 10, "bold"))
+        except Exception:
+            pass
+
+    def copy_console(self):
+        try:
+            content = self.console_textbox.get("1.0", "end-1c")
+            if content.strip():
+                self.clipboard_clear()
+                self.clipboard_append(content)
+                self.btn_copy_console.configure(text="✓ Copied!")
+                self.after(1200, lambda: self.btn_copy_console.configure(text="📋 Copy"))
+        except Exception:
+            pass
+
+    def clear_console(self):
+        self.console_textbox.configure(state="normal")
+        self.console_textbox.delete("1.0", "end")
+        self.console_textbox.configure(state="disabled")
+        self.console_line_count = 0
+        if hasattr(self, "console_count_lbl"):
+            self.console_count_lbl.configure(text="0 lines")
+        self.write_console("Console log cleared. Ready for next operation.")
+
     def write_console(self, text: str, clear: bool = False):
         self.console_textbox.configure(state="normal")
         if clear:
             self.console_textbox.delete("1.0", "end")
-        self.console_textbox.insert("end", text + "\n")
+            self.console_line_count = 0
+
+        tb = self.console_textbox._textbox
+        now_str = datetime.datetime.now().strftime("%H:%M:%S")
+
+        for line in text.split("\n"):
+            if not line:
+                tb.insert("end", "\n")
+                continue
+
+            self.console_line_count += 1
+            # Add timestamp
+            tb.insert("end", f"[{now_str}] ", "time")
+
+            l_strip = line.strip()
+            if l_strip.startswith("===") or l_strip.startswith("---") or l_strip.startswith("━━"):
+                tb.insert("end", line + "\n", "header")
+            elif any(w in line for w in ["Success", "FOUND", "successfully", "Speedup", "OK"]):
+                tb.insert("end", line + "\n", "success")
+            elif any(w in line for w in ["Failure", "not present", "Error", "Warning", "failed"]):
+                tb.insert("end", line + "\n", "error")
+            elif any(w in line for w in ["Users", "Table Size", "Collisions", "Load Factor", "Avg Bucket", "Speedup:"]):
+                tb.insert("end", line + "\n", "metric")
+            elif any(w in line for w in ["Step", "Running", "Generated", "Target User", "Algorithm:"]):
+                tb.insert("end", line + "\n", "step")
+            else:
+                tb.insert("end", line + "\n", "normal")
+
         self.console_textbox.see("end")
         self.console_textbox.configure(state="disabled")
+        if hasattr(self, "console_count_lbl"):
+            self.console_count_lbl.configure(text=f"{self.console_line_count} lines")
 
     def update_stats_ui(self):
         if not self.hash_table:
@@ -605,27 +832,85 @@ class App(ctk.CTk):
         self.update_stats_ui()
         for w in self.visualizer_scroll.winfo_children(): w.destroy()
 
+    # ── THEME TOGGLE ──
+    def toggle_theme(self):
+        """Switch between light and dark mode, re-applying colors to all panels."""
+        mode = self.theme_switch_var.get()
+        if mode == "dark":
+            self.current_theme = THEME_DARK
+            ctk.set_appearance_mode("dark")
+        else:
+            self.current_theme = THEME_LIGHT
+            ctk.set_appearance_mode("light")
+        t = self.current_theme
+
+        # Sidebar
+        self.sidebar_frame.configure(fg_color=t["sidebar_bg"])
+        self.app_title.configure(text_color=t["accent"])
+
+        # Separator
+        self.sep.configure(fg_color=t["separator"])
+
+        # Right panels
+        self.right_frame.configure(fg_color=t["main_bg"])
+        self.content_tabview.configure(fg_color=t["card_bg"])
+
+        # Middle + console frames
+        self.middle_frame.configure(fg_color=t["card_alt"])
+        self.anim_panel.configure(fg_color=t["card_inner"])
+        self.anim_title.configure(text_color=t["accent"])
+        self.stats_panel.configure(fg_color=t["card_inner"])
+        self.console_frame.configure(fg_color=t["card_alt"], border_color=t["console_border"])
+        self.console_textbox.configure(fg_color=t["console_bg"])
+        self.console_prompt_lbl.configure(text_color=t["accent"])
+        self.console_title.configure(text_color=t["text_primary"])
+        self.console_count_lbl.configure(text_color=t["text_muted"])
+        self.btn_copy_console.configure(fg_color=t["console_btn_bg"], hover_color=t["console_btn_hover"])
+        self.btn_clear_console.configure(fg_color=t["console_btn_bg"], hover_color=t["console_btn_hover"])
+        self.configure_console_tags()
+
+        # Search bar
+        self.search_control_frame.configure(fg_color=t["card_alt"])
+
+        # Visualizer + recommender backgrounds
+        self.visualizer_scroll.configure(fg_color=t["card_inner"])
+        self.rec_control_frame.configure(fg_color=t["card_inner"])
+        self.rec_output_frame.configure(fg_color=t["card_alt"])
+
+        # Graph placeholders
+        for gf in [self.graph_frame_1, self.graph_frame_2, self.graph_frame_3]:
+            gf.configure(fg_color=t["card_inner"])
+
+        # Re-render hash table grid if populated
+        if self.hash_table:
+            self.click_show_hash_table()
+
+        self.write_console(f"Theme switched to {mode} mode.")
+
 
 class EduPopup(ctk.CTkToplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("How It Works — Complete Simulator Guide")
-        self.geometry("820x680")
+        self.geometry("860x700")
         self.resizable(True, True)
 
-        scroll = ctk.CTkScrollableFrame(self, fg_color="#18181C")
+        t = parent.current_theme
+        self.configure(fg_color=t["main_bg"])
+
+        scroll = ctk.CTkScrollableFrame(self, fg_color=t["sidebar_bg"])
         scroll.pack(fill="both", expand=True, padx=10, pady=10)
 
         # --- TITLE ---
         ctk.CTkLabel(
             scroll, text="DOE Hash Table & Recommender Simulator — Full Guide",
-            font=ctk.CTkFont(size=16, weight="bold"), text_color="#00E5FF"
+            font=ctk.CTkFont(size=16, weight="bold"), text_color=t["accent"]
         ).pack(anchor="w", padx=10, pady=(10, 5))
 
         ctk.CTkLabel(
             scroll,
             text="Follow the numbered buttons (1 → 2 → 3 → 4) in order for the best experience.",
-            font=ctk.CTkFont(size=11, slant="italic"), text_color="#AAAAAA"
+            font=ctk.CTkFont(size=11, slant="italic"), text_color=t["text_secondary"]
         ).pack(anchor="w", padx=10, pady=(0, 10))
 
         sections = [
@@ -813,10 +1098,11 @@ class EduPopup(ctk.CTkToplevel):
         ]
 
         for title, body, color in sections:
+            sec_color = t["accent"] if color == "#00E5FF" else color
             title_lbl = ctk.CTkLabel(
                 scroll, text=title,
                 font=ctk.CTkFont(size=13, weight="bold"),
-                text_color=color
+                text_color=sec_color
             )
             title_lbl.pack(anchor="w", padx=10, pady=(12, 2))
 
@@ -824,12 +1110,13 @@ class EduPopup(ctk.CTkToplevel):
                 body_lbl = ctk.CTkLabel(
                     scroll, text=body,
                     font=ctk.CTkFont(family="Courier", size=11),
-                    justify="left", wraplength=760
+                    text_color=t["text_primary"],
+                    justify="left", wraplength=780
                 )
                 body_lbl.pack(anchor="w", padx=20, pady=(0, 4))
 
         # Close button
-        btn_close = ctk.CTkButton(self, text="Close Guide", command=self.destroy, fg_color="#1F6AA5", width=140)
+        btn_close = ctk.CTkButton(self, text="Close Guide", command=self.destroy, fg_color=t["btn_primary"], width=140)
         btn_close.pack(pady=10)
 
 if __name__ == "__main__":

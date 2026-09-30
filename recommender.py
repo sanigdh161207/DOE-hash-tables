@@ -398,6 +398,10 @@ def compute_cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
     return float(np.clip(sim, -1.0, 1.0))
 
 
+# Backwards compatibility alias
+cosine_similarity = compute_cosine_similarity
+
+
 def weighted_cosine_similarity(vec_a: np.ndarray, vec_b: np.ndarray, weights: np.ndarray) -> float:
     """
     Computes weighted cosine similarity:
@@ -440,20 +444,38 @@ class RecommenderSystem:
         self.strategy_class = strategy_class
         self.hash_table: AbstractHashTable = strategy_class(table_size)
         self.all_users: List[int] = []
+        self.all_user_ids: List[int] = []
         self.dataset: List[Tuple[int, List[int]]] = []
         self.movie_popularities: Dict[int, int] = {}
         self.idf_weights: Optional[np.ndarray] = None
         self.inverted_index: Dict[int, Set[int]] = {}
+        self.movie_vocab: List[int] = []
+        self.movie_to_idx: Dict[int, int] = {}
 
-    def fit(self, dataset: List[Tuple[int, List[int]]], num_movies: int = 100) -> None:
+    def set_movie_vocabulary(self, movie_vocab: List[int]) -> None:
+        self.movie_vocab = list(movie_vocab)
+        self.movie_to_idx = {m: i for i, m in enumerate(self.movie_vocab)}
+
+    def fit(self, dataset: List[Tuple[int, List[int]]], num_movies: int = 100, movie_vocab: Optional[List[int]] = None) -> None:
         self.dataset = dataset
         self.all_users = []
-        self.movie_popularities = {m: 0 for m in range(1, num_movies + 1)}
-        self.inverted_index = {m: set() for m in range(1, num_movies + 1)}
+        self.all_user_ids = []
+        all_movies_set: Set[int] = set()
+
+        if movie_vocab is not None:
+            self.set_movie_vocabulary(movie_vocab)
+            num_movies = max(self.movie_vocab) if self.movie_vocab else num_movies
+        elif not self.movie_vocab:
+            self.set_movie_vocabulary(list(range(1, num_movies + 1)))
+
+        self.movie_popularities = {m: 0 for m in self.movie_vocab}
+        self.inverted_index = {m: set() for m in self.movie_vocab}
 
         for user_id, movies in dataset:
             self.hash_table.insert(user_id, movies, record_trace=False)
             self.all_users.append(user_id)
+            self.all_user_ids.append(user_id)
+            all_movies_set.update(movies)
             for m in movies:
                 self.movie_popularities[m] = self.movie_popularities.get(m, 0) + 1
                 if m in self.inverted_index:
@@ -461,22 +483,81 @@ class RecommenderSystem:
 
         self.idf_weights = compute_idf_weights(dataset, num_movies)
 
+    def user_to_vector(self, movies: List[int]) -> np.ndarray:
+        """Converts user movies into a binary vector aligned with movie_vocab."""
+        vec = np.zeros(len(self.movie_vocab), dtype=np.float64)
+        for m in movies:
+            if m in self.movie_to_idx:
+                vec[self.movie_to_idx[m]] = 1.0
+        return vec
+
     def get_user_preferences(self, user_id: int) -> Tuple[Optional[List[int]], List[Dict[str, Any]]]:
         return self.hash_table.search(user_id)
 
-    def recommend_movies(self, user_id: int, all_movies: List[int], top_n: int = 3) -> Tuple[List[int], List[Dict[str, Any]]]:
-        """
-        Random baseline recommendation (preserves backward compatibility, uses local RNG).
-        """
+    def get_user_vector(self, user_id: int) -> Tuple[Optional[np.ndarray], List[Dict[str, Any]]]:
         user_movies, trace = self.get_user_preferences(user_id)
+        if user_movies is None:
+            return None, trace
+        return self.user_to_vector(user_movies), trace
+
+    def compute_user_similarities(self, target_user_id: int) -> List[Tuple[int, float]]:
+        """Calculates cosine similarity between target user and all others, sorted descending."""
+        target_movies, _ = self.get_user_preferences(target_user_id)
+        if target_movies is None:
+            return []
+        target_vec = self.user_to_vector(target_movies)
+        similarities: List[Tuple[int, float]] = []
+        for other_id in self.all_users:
+            if other_id == target_user_id:
+                continue
+            other_movies, _ = self.get_user_preferences(other_id)
+            if other_movies is None:
+                continue
+            other_vec = self.user_to_vector(other_movies)
+            sim = compute_cosine_similarity(target_vec, other_vec)
+            similarities.append((other_id, sim))
+        similarities.sort(key=lambda item: (-item[1], item[0]))
+        return similarities
+
+    def recommend_movies_baseline(
+        self, user_id: int, all_movies: Optional[List[int]] = None, top_n: int = 3
+    ) -> Tuple[List[int], Dict[str, float], List[Dict[str, Any]]]:
+        """Preserved baseline recommendation algorithm with timing diagnostics."""
+        t0 = time.perf_counter()
+        t_hl = time.perf_counter()
+        user_movies, trace = self.get_user_preferences(user_id)
+        hash_lookup_time = time.perf_counter() - t_hl
+
         if not user_movies:
-            return [], trace
-            
-        recommendations = [m for m in all_movies if m not in user_movies]
+            timing = {
+                "hash_lookup_time": hash_lookup_time,
+                "similarity_calc_time": 0.0,
+                "rec_gen_time": 0.0,
+                "total_time": time.perf_counter() - t0
+            }
+            return [], timing, trace
+
+        pool = all_movies if all_movies is not None else self.movie_vocab
+        t_gen = time.perf_counter()
+        candidates = [m for m in pool if m not in user_movies]
         local_rng = random.Random(user_id)
-        if len(recommendations) <= top_n:
-            return sorted(recommendations), trace
-        return local_rng.sample(recommendations, top_n), trace
+        recs = local_rng.sample(candidates, min(top_n, len(candidates))) if candidates else []
+        rec_gen_time = time.perf_counter() - t_gen
+
+        timing = {
+            "hash_lookup_time": hash_lookup_time,
+            "similarity_calc_time": 0.0,
+            "rec_gen_time": rec_gen_time,
+            "total_time": time.perf_counter() - t0
+        }
+        return recs, timing, trace
+
+    def recommend_movies(
+        self, user_id: int, all_movies: Optional[List[int]] = None, top_n: int = 3
+    ) -> Tuple[List[int], List[Dict[str, Any]]]:
+        """Backwards-compatible wrapper routing to baseline."""
+        recs, _, trace = self.recommend_movies_baseline(user_id, all_movies, top_n)
+        return recs, trace
 
     def _user_movies_to_vector(self, movies: List[int], num_movies: int) -> np.ndarray:
         vec = np.zeros(num_movies + 1, dtype=np.float64)
@@ -488,22 +569,41 @@ class RecommenderSystem:
     def recommend_movies_cosine(
         self,
         user_id: int,
-        all_movies: List[int],
+        all_movies: Optional[List[int]] = None,
         top_n: int = 3,
         top_k_users: int = 10,
         use_inverted_index: bool = False
-    ) -> Tuple[List[int], List[Dict[str, Any]]]:
+    ) -> Any:
         """
         User-based collaborative filtering using cosine similarity.
+        Dual return mode:
+          - If called with explicit all_movies: returns (recs, trace)
+          - If called without all_movies (or all_movies is None): returns (recs, timing, top_neighbors, trace)
         """
+        is_direct_call = (all_movies is None)
+        active_movies = all_movies if all_movies is not None else self.movie_vocab
+
+        t0 = time.perf_counter()
+        t_hl = time.perf_counter()
         target_movies, trace = self.get_user_preferences(user_id)
+        hash_lookup_time = time.perf_counter() - t_hl
+
         if not target_movies:
+            timing = {
+                "hash_lookup_time": hash_lookup_time,
+                "similarity_calc_time": 0.0,
+                "rec_gen_time": 0.0,
+                "total_time": time.perf_counter() - t0
+            }
+            if is_direct_call:
+                return [], timing, [], trace
             return [], trace
 
-        num_movies = max(all_movies) if all_movies else 100
+        num_movies = max(active_movies) if active_movies else 100
         target_vec = self._user_movies_to_vector(target_movies, num_movies)
 
         # Candidate user selection
+        t_sim = time.perf_counter()
         candidate_user_ids = set()
         if use_inverted_index:
             for m in target_movies:
@@ -525,17 +625,31 @@ class RecommenderSystem:
         # Deterministic sorting: sort by similarity descending, then other_id ascending
         similarities.sort(key=lambda x: (-x[0], x[1]))
         top_neighbors = similarities[:top_k_users]
+        similarity_calc_time = time.perf_counter() - t_sim
 
         # Aggregate candidate movie scores
+        t_gen = time.perf_counter()
         candidate_scores: Dict[int, float] = {}
         for sim, _, other_movies in top_neighbors:
             for m in other_movies:
-                if m not in target_movies and m in all_movies:
+                if m not in target_movies and m in active_movies:
                     candidate_scores[m] = candidate_scores.get(m, 0.0) + sim
 
         # Deterministic sorting of candidates: score descending, movie_id ascending
         ranked = sorted(candidate_scores.items(), key=lambda x: (-x[1], x[0]))
         recs = [m for m, _ in ranked[:top_n]]
+        rec_gen_time = time.perf_counter() - t_gen
+
+        timing = {
+            "hash_lookup_time": hash_lookup_time,
+            "similarity_calc_time": similarity_calc_time,
+            "rec_gen_time": rec_gen_time,
+            "total_time": time.perf_counter() - t0
+        }
+
+        if is_direct_call:
+            neighbor_tuples = [(uid, s) for s, uid, _ in top_neighbors]
+            return recs, timing, neighbor_tuples, trace
         return recs, trace
 
     def recommend_movies_weighted_cosine(
