@@ -1,0 +1,3 @@
+recommender,precision@k,recall@k,hit_rate@k,ndcg@k,coverage,diversity,avg_popularity,top_10_share,latency_sec
+Baseline (Random),0.0124,0.062,0.062,0.03586,1.0,0.807,25.4724,0.09,5e-05
+Cosine Recommender,0.046,0.23,0.23,0.17283,1.0,0.68913,58.13531,0.42794,0.01511

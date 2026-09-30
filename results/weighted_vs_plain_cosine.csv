@@ -1,0 +1,4 @@
+strategy,precision@k,recall@k,hit_rate@k,ndcg@k,coverage,diversity,avg_popularity,top_10_share,latency_sec
+Plain Cosine,0.046,0.23,0.23,0.17283,1.0,0.68913,58.13531,0.42794,0.01253
+IDF-Weighted Cosine,0.0472,0.236,0.236,0.17204,0.99,0.6974,61.7568,0.47,0.02686
+IDF + Popularity Damping,0.0332,0.166,0.166,0.10859,1.0,0.5922,32.6296,0.1664,0.02854

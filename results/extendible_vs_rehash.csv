@@ -1,0 +1,6 @@
+dataset_size,rehash_insert_sec,rehash_lookup_sec,rehash_mem_bytes,rehash_entries_moved,extendible_insert_sec,extendible_lookup_sec,extendible_mem_bytes,extendible_global_depth,extendible_splits,extendible_directory_doublings,extendible_entries_moved
+10,6.9e-05,1.63e-06,2240,20,0.000104,4.15e-06,496,2,1,1,4
+100,0.000325,7.39e-07,19680,200,0.000509,1.45e-06,6112,7,35,6,140
+500,0.001781,7.37e-07,85408,1000,0.003163,2.353e-06,41400,11,182,10,728
+1000,0.003398,1.01e-06,171136,2000,0.006337,2.329e-06,65616,11,361,10,1444
+5000,0.030995,1.182e-06,1140640,10000,0.034477,2.049e-06,373584,14,1789,13,7156

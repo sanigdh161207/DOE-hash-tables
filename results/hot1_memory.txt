@@ -1,0 +1,40 @@
+============================================================
+HOT1 SPARSE MEMORY CALCULATION REPORT
+============================================================
+Dimensions: 1,000,000 Users x 100,000 Items
+Total Matrix Cells: 100,000,000,000 cells
+
+1. DENSE FLOAT64 MATRIX
+------------------------------------------------------------
+Formula: Total Cells x 8 bytes
+Exact Size: 800,000,000,000 bytes
+Size in GiB: 745.06 GiB
+
+2. SPARSE CSR REPRESENTATION BREAKDOWN
+------------------------------------------------------------
+--- 0.01% Density (0.0001) ---
+Non-zero elements (NNZ): 10,000,000
+  - data array (float64):   80,000,000 bytes (76.29 MB)
+  - indices array (int32):  40,000,000 bytes (38.15 MB)
+  - indptr array (int32):   4,000,004 bytes (3.81 MB)
+  Total CSR Footprint:      124,000,004 bytes (118.26 MB)
+
+--- 0.001% Density (0.00001) ---
+Non-zero elements (NNZ): 1,000,000
+  - data array (float64):   8,000,000 bytes (7.63 MB)
+  - indices array (int32):  4,000,000 bytes (3.81 MB)
+  - indptr array (int32):   4,000,004 bytes (3.81 MB)
+  Total CSR Footprint:      16,000,004 bytes (15.26 MB)
+
+3. ANALYSIS OF HANDOUT '8 MB' CLAIM VS EXACT MATH
+------------------------------------------------------------
+Observation:
+The handout's approximate '8 MB' claim corresponds specifically to the raw
+data payload (1,000,000 non-zero entries * 8 bytes = 8,000,000 bytes = 8 MB)
+at 0.001% density, excluding structural indexing arrays (indices + indptr).
+When accounting for complete SciPy CSR indexing overhead:
+  - 0.01% density requires ~124 MB (~118.25 MiB)
+  - 0.001% density requires ~16 MB (~15.26 MiB)
+Conclusion: Sparse CSR representation achieves over 99.98% memory reduction
+compared to the 745 GiB dense matrix.
+============================================================
