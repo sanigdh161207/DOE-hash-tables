@@ -275,10 +275,19 @@ class App(ctk.CTk):
         self.search_control_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 5))
         self.search_lbl = ctk.CTkLabel(self.search_control_frame, text="Lookup / Search User ID:", font=ctk.CTkFont(size=11, weight="bold"))
         self.search_lbl.pack(side="left", padx=10)
-        self.search_entry = ctk.CTkEntry(self.search_control_frame, width=140, placeholder_text="e.g. 1005")
+        self.search_entry = ctk.CTkEntry(self.search_control_frame, width=120, placeholder_text="e.g. 1005")
         self.search_entry.pack(side="left", padx=5)
-        self.btn_search = ctk.CTkButton(self.search_control_frame, text="Search & Animate", command=self.click_search_animate, width=130)
-        self.btn_search.pack(side="left", padx=10)
+        self.btn_search = ctk.CTkButton(self.search_control_frame, text="Search & Animate", command=self.click_search_animate, width=125)
+        self.btn_search.pack(side="left", padx=8)
+
+        self.speed_lbl = ctk.CTkLabel(self.search_control_frame, text="Anim Speed:", font=ctk.CTkFont(size=10, weight="bold"))
+        self.speed_lbl.pack(side="left", padx=(12, 4))
+        self.anim_speed_menu = ctk.CTkSegmentedButton(
+            self.search_control_frame, values=["Fast", "Normal", "Slow"], width=130, height=24,
+            font=ctk.CTkFont(size=9, weight="bold")
+        )
+        self.anim_speed_menu.set("Normal")
+        self.anim_speed_menu.pack(side="left", padx=4)
 
         # --- TAB 2: RECOMMENDER LAB ---
         self.tab_recommender.grid_columnconfigure(0, weight=1)
@@ -345,7 +354,13 @@ class App(ctk.CTk):
         self.anim_panel = ctk.CTkFrame(self.middle_frame, fg_color="#202025")
         self.anim_panel.grid(row=0, column=0, sticky="nsew", padx=(5, 2), pady=5)
         self.anim_title = ctk.CTkLabel(self.anim_panel, text="Operation Step Trace", font=ctk.CTkFont(size=12, weight="bold"), text_color="#00E5FF")
-        self.anim_title.pack(anchor="w", padx=10, pady=2)
+        self.anim_title.pack(anchor="w", padx=10, pady=(4, 1))
+
+        # Animated Progress Bar
+        self.anim_progress = ctk.CTkProgressBar(self.anim_panel, height=4, corner_radius=2, progress_color="#00E5FF")
+        self.anim_progress.set(0.0)
+        self.anim_progress.pack(fill="x", padx=10, pady=(2, 3))
+
         self.anim_text = ctk.CTkLabel(self.anim_panel, text="No ongoing operation.\nUse search or insert to trace execution steps.", justify="left", font=ctk.CTkFont(size=11))
         self.anim_text.pack(fill="both", expand=True, padx=10, pady=(0, 5))
 
@@ -374,17 +389,21 @@ class App(ctk.CTk):
             self.stats_labels[label_txt] = val_lbl
 
         # --- BOTTOM PANEL: OUTPUT CONSOLE LOG ---
-        self.console_line_count = 0
+        self.console_log_history = []
+        self.console_font_size = 10
+        self.console_wrap_mode = True
+        self.console_heights = {"S": 140, "M": 210, "L": 350}
+
         self.console_frame = ctk.CTkFrame(
-            self.right_frame, height=175, fg_color="#18181C",
+            self.right_frame, height=210, fg_color="#18181C",
             corner_radius=8, border_width=1, border_color="#282932"
         )
         self.console_frame.grid(row=2, column=0, sticky="nsew", padx=15, pady=(5, 15))
         self.console_frame.grid_propagate(False)
 
         # Console Header Toolbar
-        self.console_header = ctk.CTkFrame(self.console_frame, height=30, fg_color="transparent")
-        self.console_header.pack(fill="x", padx=10, pady=(6, 2))
+        self.console_header = ctk.CTkFrame(self.console_frame, height=32, fg_color="transparent")
+        self.console_header.pack(fill="x", padx=10, pady=(6, 3))
 
         # Left Header: prompt icon, title, status indicator, line counter
         self.console_left_header = ctk.CTkFrame(self.console_header, fg_color="transparent")
@@ -424,34 +443,84 @@ class App(ctk.CTk):
         )
         self.console_count_lbl.pack(side="left")
 
-        # Right Header: Action buttons (Copy, Clear)
+        # Right Header: Controls (Filter, Height, Zoom, Wrap, Copy, Clear)
         self.console_right_header = ctk.CTkFrame(self.console_header, fg_color="transparent")
         self.console_right_header.pack(side="right", fill="y")
 
+        # Filter Entry
+        self.console_filter = ctk.CTkEntry(
+            self.console_right_header, placeholder_text="🔍 Filter log...",
+            width=105, height=22, font=ctk.CTkFont(size=10)
+        )
+        self.console_filter.pack(side="left", padx=(0, 6))
+        self.console_filter.bind("<KeyRelease>", self.filter_console_logs)
+
+        # Height Selector (S / M / L)
+        self.size_segmented = ctk.CTkSegmentedButton(
+            self.console_right_header, values=["S", "M", "L"], width=70, height=22,
+            font=ctk.CTkFont(size=9, weight="bold"),
+            command=self.change_console_height
+        )
+        self.size_segmented.set("M")
+        self.size_segmented.pack(side="left", padx=(0, 6))
+
+        # Font Zoom A- / A+
+        self.btn_font_minus = ctk.CTkButton(
+            self.console_right_header, text="A-", width=28, height=22,
+            font=ctk.CTkFont(size=9, weight="bold"),
+            fg_color="#252733", hover_color="#353846",
+            command=self.zoom_font_minus
+        )
+        self.btn_font_minus.pack(side="left", padx=1)
+
+        self.btn_font_plus = ctk.CTkButton(
+            self.console_right_header, text="A+", width=28, height=22,
+            font=ctk.CTkFont(size=9, weight="bold"),
+            fg_color="#252733", hover_color="#353846",
+            command=self.zoom_font_plus
+        )
+        self.btn_font_plus.pack(side="left", padx=(1, 6))
+
+        # Word Wrap Toggle
+        self.btn_wrap = ctk.CTkButton(
+            self.console_right_header, text="↩ Wrap", width=55, height=22,
+            font=ctk.CTkFont(size=9, weight="bold"),
+            fg_color="#252733", hover_color="#353846",
+            command=self.toggle_console_wrap
+        )
+        self.btn_wrap.pack(side="left", padx=(0, 6))
+
+        # Copy & Clear
         self.btn_copy_console = ctk.CTkButton(
-            self.console_right_header, text="📋 Copy", width=62, height=22,
+            self.console_right_header, text="📋 Copy", width=55, height=22,
             font=ctk.CTkFont(size=10, weight="bold"),
             fg_color="#252733", hover_color="#353846",
             command=self.copy_console
         )
-        self.btn_copy_console.pack(side="right", padx=(4, 0))
+        self.btn_copy_console.pack(side="left", padx=(0, 4))
 
         self.btn_clear_console = ctk.CTkButton(
-            self.console_right_header, text="🗑 Clear", width=62, height=22,
+            self.console_right_header, text="🗑 Clear", width=55, height=22,
             font=ctk.CTkFont(size=10, weight="bold"),
             fg_color="#252733", hover_color="#353846",
             command=self.clear_console
         )
-        self.btn_clear_console.pack(side="right", padx=(0, 4))
+        self.btn_clear_console.pack(side="left")
 
-        # Textbox with monospace syntax font
+        # Textbox with generous spacing and monospace syntax font
         self.console_textbox = ctk.CTkTextbox(
             self.console_frame, state="disabled",
             font=ctk.CTkFont(family="Consolas", size=10),
-            fg_color="#0D0E12", corner_radius=6
+            fg_color="#0D0E12", corner_radius=6,
+            wrap="word"
         )
         self.console_textbox.pack(fill="both", expand=True, padx=8, pady=(2, 8))
+        try:
+            self.console_textbox._textbox.configure(spacing1=2, spacing3=2)
+        except Exception:
+            pass
         self.configure_console_tags()
+        self.start_pulsing_dot()
 
     # --- UI CALLBACKS & ACTIONS ---
     def configure_console_tags(self):
@@ -460,13 +529,71 @@ class App(ctk.CTk):
             tb = self.console_textbox._textbox
             tb.tag_config("normal", foreground=t.get("tag_text", "#D6DEEB"))
             tb.tag_config("time", foreground=t.get("tag_time", "#637777"))
-            tb.tag_config("header", foreground=t.get("tag_header", "#00E5FF"), font=("Consolas", 10, "bold"))
-            tb.tag_config("success", foreground=t.get("tag_success", "#00E676"), font=("Consolas", 10, "bold"))
-            tb.tag_config("error", foreground=t.get("tag_error", "#FF5252"), font=("Consolas", 10, "bold"))
+            tb.tag_config("header", foreground=t.get("tag_header", "#00E5FF"), font=("Consolas", self.console_font_size, "bold"))
+            tb.tag_config("success", foreground=t.get("tag_success", "#00E676"), font=("Consolas", self.console_font_size, "bold"))
+            tb.tag_config("error", foreground=t.get("tag_error", "#FF5252"), font=("Consolas", self.console_font_size, "bold"))
             tb.tag_config("metric", foreground=t.get("tag_metric", "#FFD54F"))
-            tb.tag_config("step", foreground=t.get("tag_step", "#B388FF"), font=("Consolas", 10, "bold"))
+            tb.tag_config("step", foreground=t.get("tag_step", "#B388FF"), font=("Consolas", self.console_font_size, "bold"))
         except Exception:
             pass
+
+    def toggle_console_wrap(self):
+        self.console_wrap_mode = not self.console_wrap_mode
+        wrap_val = "word" if self.console_wrap_mode else "none"
+        self.console_textbox._textbox.configure(wrap=wrap_val)
+        self.btn_wrap.configure(text="↩ Wrap" if self.console_wrap_mode else "⇥ NoWrap")
+
+    def zoom_font_minus(self):
+        if self.console_font_size > 8:
+            self.console_font_size -= 1
+            self.apply_console_font()
+
+    def zoom_font_plus(self):
+        if self.console_font_size < 16:
+            self.console_font_size += 1
+            self.apply_console_font()
+
+    def apply_console_font(self):
+        self.console_textbox.configure(font=ctk.CTkFont(family="Consolas", size=self.console_font_size))
+        try:
+            tb = self.console_textbox._textbox
+            tb.tag_config("header", font=("Consolas", self.console_font_size, "bold"))
+            tb.tag_config("success", font=("Consolas", self.console_font_size, "bold"))
+            tb.tag_config("error", font=("Consolas", self.console_font_size, "bold"))
+            tb.tag_config("step", font=("Consolas", self.console_font_size, "bold"))
+        except Exception:
+            pass
+
+    def change_console_height(self, size_choice):
+        h = self.console_heights.get(size_choice, 210)
+        self.console_frame.configure(height=h)
+        self.right_frame.update_idletasks()
+
+    def filter_console_logs(self, event=None):
+        query = self.console_filter.get().strip().lower()
+        self.render_console_buffer(query)
+
+    def render_console_buffer(self, filter_query: str = ""):
+        self.console_textbox.configure(state="normal")
+        self.console_textbox.delete("1.0", "end")
+        tb = self.console_textbox._textbox
+        displayed_count = 0
+
+        for now_str, line, tag in self.console_log_history:
+            if filter_query and filter_query not in line.lower() and filter_query not in tag.lower():
+                continue
+            displayed_count += 1
+            tb.insert("end", f"[{now_str}] ", "time")
+            tb.insert("end", line + "\n", tag)
+
+        self.console_textbox.see("end")
+        self.console_textbox.configure(state="disabled")
+        if hasattr(self, "console_count_lbl"):
+            total = len(self.console_log_history)
+            if filter_query:
+                self.console_count_lbl.configure(text=f"{displayed_count}/{total} lines")
+            else:
+                self.console_count_lbl.configure(text=f"{total} lines")
 
     def copy_console(self):
         try:
@@ -474,74 +601,90 @@ class App(ctk.CTk):
             if content.strip():
                 self.clipboard_clear()
                 self.clipboard_append(content)
-                self.btn_copy_console.configure(text="✓ Copied!")
+                self.btn_copy_console.configure(text="✓ Copied")
                 self.after(1200, lambda: self.btn_copy_console.configure(text="📋 Copy"))
         except Exception:
             pass
 
     def clear_console(self):
-        self.console_textbox.configure(state="normal")
-        self.console_textbox.delete("1.0", "end")
-        self.console_textbox.configure(state="disabled")
-        self.console_line_count = 0
-        if hasattr(self, "console_count_lbl"):
-            self.console_count_lbl.configure(text="0 lines")
+        self.console_log_history.clear()
+        self.render_console_buffer()
         self.write_console("Console log cleared. Ready for next operation.")
 
     def write_console(self, text: str, clear: bool = False):
-        self.console_textbox.configure(state="normal")
         if clear:
-            self.console_textbox.delete("1.0", "end")
-            self.console_line_count = 0
+            self.console_log_history.clear()
 
-        tb = self.console_textbox._textbox
         now_str = datetime.datetime.now().strftime("%H:%M:%S")
 
         for line in text.split("\n"):
             if not line:
-                tb.insert("end", "\n")
                 continue
-
-            self.console_line_count += 1
-            # Add timestamp
-            tb.insert("end", f"[{now_str}] ", "time")
 
             l_strip = line.strip()
             if l_strip.startswith("===") or l_strip.startswith("---") or l_strip.startswith("━━"):
-                tb.insert("end", line + "\n", "header")
+                tag = "header"
             elif any(w in line for w in ["Success", "FOUND", "successfully", "Speedup", "OK"]):
-                tb.insert("end", line + "\n", "success")
+                tag = "success"
             elif any(w in line for w in ["Failure", "not present", "Error", "Warning", "failed"]):
-                tb.insert("end", line + "\n", "error")
-            elif any(w in line for w in ["Users", "Table Size", "Collisions", "Load Factor", "Avg Bucket", "Speedup:"]):
-                tb.insert("end", line + "\n", "metric")
+                tag = "error"
+            elif any(w in line for w in ["Users", "Table Size", "Collisions", "Load Factor", "Avg Bucket"]):
+                tag = "metric"
             elif any(w in line for w in ["Step", "Running", "Generated", "Target User", "Algorithm:"]):
-                tb.insert("end", line + "\n", "step")
+                tag = "step"
             else:
-                tb.insert("end", line + "\n", "normal")
+                tag = "normal"
 
-        self.console_textbox.see("end")
-        self.console_textbox.configure(state="disabled")
-        if hasattr(self, "console_count_lbl"):
-            self.console_count_lbl.configure(text=f"{self.console_line_count} lines")
+            self.console_log_history.append((now_str, line, tag))
+
+        filter_query = self.console_filter.get().strip().lower() if hasattr(self, "console_filter") else ""
+        self.render_console_buffer(filter_query)
+
+    def start_pulsing_dot(self):
+        colors = ["#00E676", "#00B0FF", "#00E5FF", "#69F0AE", "#76FF03", "#00E5FF"]
+        sizes  = [10, 11, 10, 9, 10, 11]
+        def pulse(phase=0):
+            try:
+                if hasattr(self, "console_live_dot") and self.console_live_dot.winfo_exists():
+                    self.console_live_dot.configure(
+                        text_color=colors[phase % len(colors)],
+                        font=ctk.CTkFont(size=sizes[phase % len(sizes)])
+                    )
+                self.after(600, lambda: pulse(phase + 1))
+            except Exception:
+                pass
+        pulse(0)
+
+    def _animate_stat_flash(self, lbl, final_text, flash_color="#00E5FF", normal_color=None):
+        """Flash a stat label with a highlight color then restore."""
+        if normal_color is None:
+            normal_color = self.current_theme.get("text_primary", "#E0E0E0")
+        lbl.configure(text=final_text, text_color=flash_color)
+        self.after(400, lambda: lbl.configure(text_color=normal_color))
 
     def update_stats_ui(self):
         if not self.hash_table:
             return
         stats = self.hash_table.get_collision_statistics()
-        self.stats_labels["Users:"].configure(text=str(stats.get("users", 0)))
-        self.stats_labels["Table Size:"].configure(text=str(stats.get("table_size", 0)))
-        self.stats_labels["Collisions:"].configure(text=str(stats.get("collisions", 0)))
-        self.stats_labels["Load Factor:"].configure(text=f"{stats.get('load_factor', 0.0):.2f}")
+        t = self.current_theme
+        nc = t.get("text_primary", "#E0E0E0")
+        self._animate_stat_flash(self.stats_labels["Users:"],      str(stats.get("users", 0)),      "#00E5FF", nc)
+        self._animate_stat_flash(self.stats_labels["Table Size:"], str(stats.get("table_size", 0)), "#00E5FF", nc)
+        coll = stats.get("collisions", 0)
+        coll_color = "#FF5252" if coll > 10 else "#00E676"
+        self._animate_stat_flash(self.stats_labels["Collisions:"], str(coll),                       coll_color,  nc)
+        lf = stats.get("load_factor", 0.0)
+        lf_color = "#FF5252" if lf > 0.80 else ("#FFD54F" if lf > 0.60 else "#00E676")
+        self._animate_stat_flash(self.stats_labels["Load Factor:"], f"{lf:.2f}",                    lf_color,    nc)
         if hasattr(self.hash_table, "global_depth"):
-            self.stats_labels["Avg Bucket Len:"].configure(text=f"G-Depth:{stats.get('global_depth')}")
-            self.stats_labels["Max Bucket Len:"].configure(text=f"Splits:{stats.get('splits_count')}")
+            self._animate_stat_flash(self.stats_labels["Avg Bucket Len:"], f"G-Depth:{stats.get('global_depth')}",  "#B388FF", nc)
+            self._animate_stat_flash(self.stats_labels["Max Bucket Len:"], f"Splits:{stats.get('splits_count')}",    "#B388FF", nc)
         elif hasattr(self.hash_table, "TOMBSTONE"):
             self.stats_labels["Avg Bucket Len:"].configure(text="N/A")
             self.stats_labels["Max Bucket Len:"].configure(text="N/A")
         else:
-            self.stats_labels["Avg Bucket Len:"].configure(text=f"{stats.get('avg_bucket_length', 0.0):.2f}")
-            self.stats_labels["Max Bucket Len:"].configure(text=str(stats.get("max_bucket_length", 0)))
+            self._animate_stat_flash(self.stats_labels["Avg Bucket Len:"], f"{stats.get('avg_bucket_length', 0.0):.2f}", "#B388FF", nc)
+            self._animate_stat_flash(self.stats_labels["Max Bucket Len:"], str(stats.get("max_bucket_length", 0)),        "#B388FF", nc)
 
     def on_strategy_change(self, choice):
         self.selected_strategy = choice
@@ -624,6 +767,49 @@ class App(ctk.CTk):
             self.rec_user_entry.delete(0, "end")
             self.rec_user_entry.insert(0, str(self.dataset[0][0]))
 
+        # Smooth animated progress fill with color pulse on completion
+        if hasattr(self, "anim_progress"):
+            self.anim_progress.set(0.0)
+            accent = self.current_theme.get("accent", "#00E5FF")
+            self.anim_progress.configure(progress_color=accent)
+            self.anim_title.configure(text=f"Populating Hash Table ({self.selected_strategy})")
+            total = len(self.dataset)
+            steps = 12
+            def anim_fill(step=0):
+                pct = min(1.0, step / steps)
+                if step <= steps:
+                    self.anim_progress.set(pct)
+                    # Color shifts cyan → green as it fills
+                    r = int(0x00 + (0x00 - 0x00) * pct)
+                    g = int(0xE5 + (0xE6 - 0xE5) * pct)
+                    b = int(0xFF + (0x76 - 0xFF) * pct)
+                    bar_color = f"#{r:02X}{max(0,min(255,g)):02X}{max(0,min(255,b)):02X}"
+                    try:
+                        self.anim_progress.configure(progress_color=bar_color)
+                    except Exception:
+                        pass
+                    self.anim_text.configure(
+                        text=f"⚡ Batch indexing user profiles... {int(pct*100)}%\nLoaded {total} records into {self.selected_strategy}.",
+                        text_color="#00E5FF"
+                    )
+                    self.after(30, lambda: anim_fill(step + 1))
+                else:
+                    self.anim_progress.set(1.0)
+                    try:
+                        self.anim_progress.configure(progress_color="#00E676")
+                    except Exception:
+                        pass
+                    self.anim_text.configure(
+                        text=f"✔ Complete: {total} users indexed into {self.selected_strategy}.\nReady — open Recommender Lab or run Benchmarks.",
+                        text_color="#00E676"
+                    )
+                    # Fade bar back after 1.6s
+                    self.after(1600, lambda: [
+                        self.anim_progress.set(0.0),
+                        self.anim_progress.configure(progress_color=accent) if hasattr(self, "anim_progress") else None
+                    ])
+            anim_fill(0)
+
     def click_show_hash_table(self):
         if not self.hash_table:
             messagebox.showwarning("Empty Table", "Please populate the Hash Table first.")
@@ -632,6 +818,9 @@ class App(ctk.CTk):
         self.content_tabview.set("Hash Table Visualizer")
         for widget in self.visualizer_scroll.winfo_children():
             widget.destroy()
+
+        self.visualizer_rows = {}
+        self.visualizer_pills = {}
 
         if isinstance(self.hash_table, ExtendibleHashTable):
             ascii_art = self.hash_table.print_directory()
@@ -650,6 +839,7 @@ class App(ctk.CTk):
             row_frame = ctk.CTkFrame(self.visualizer_scroll, fg_color="#18181C", border_color=border_color, border_width=1.5, height=55)
             row_frame.pack(fill="x", padx=5, pady=3)
             row_frame.pack_propagate(False)
+            self.visualizer_rows[idx] = (row_frame, border_color, "#18181C")
 
             idx_lbl = ctk.CTkLabel(row_frame, text=f"Index {idx:02d}", width=80, font=ctk.CTkFont(weight="bold"), text_color="#00E5FF")
             idx_lbl.pack(side="left", padx=10)
@@ -674,6 +864,7 @@ class App(ctk.CTk):
                     pill = ctk.CTkFrame(content_container, fg_color="#2A2A32", border_color="#00E5FF", border_width=1, corner_radius=6, height=38)
                     pill.pack(side="left", pady=8)
                     pill.pack_propagate(False)
+                    self.visualizer_pills[k] = pill
 
                     txt_lbl = ctk.CTkLabel(pill, text=f"User {k}", font=ctk.CTkFont(weight="bold", size=10), text_color="#E0E0E0")
                     txt_lbl.pack(padx=8, pady=(2, 0), anchor="w")
@@ -685,6 +876,30 @@ class App(ctk.CTk):
                         conn_lbl = ctk.CTkLabel(content_container, text=" ➔ ", font=ctk.CTkFont(size=12), text_color="#1F6AA5")
                         conn_lbl.pack(side="left", padx=3)
 
+    def reset_visualizer_highlights(self):
+        for idx, (frame, orig_border, orig_fg) in getattr(self, "visualizer_rows", {}).items():
+            try:
+                frame.configure(border_color=orig_border, border_width=1.5, fg_color=orig_fg)
+            except Exception:
+                pass
+        for k, pill in getattr(self, "visualizer_pills", {}).items():
+            try:
+                pill.configure(border_color="#00E5FF", fg_color="#2A2A32")
+            except Exception:
+                pass
+
+    def highlight_visualizer_bucket(self, idx: int, color: str = "#00E5FF"):
+        rows = getattr(self, "visualizer_rows", {})
+        if idx in rows:
+            frame, orig_border, orig_fg = rows[idx]
+            try:
+                frame.configure(border_color=color, border_width=2.5, fg_color="#222330")
+                if hasattr(self.visualizer_scroll, "_parent_canvas"):
+                    limit = min(self.hash_table.size if self.hash_table else 25, 25)
+                    self.visualizer_scroll._parent_canvas.yview_moveto(max(0.0, (idx - 1) / max(1, limit)))
+            except Exception:
+                pass
+
     def click_search_animate(self):
         if not self.hash_table:
             messagebox.showwarning("Empty Table", "Please populate the Hash Table first.")
@@ -695,25 +910,59 @@ class App(ctk.CTk):
         try: search_key = int(search_key_str)
         except ValueError: return
 
+        speed_choice = self.anim_speed_menu.get() if hasattr(self, "anim_speed_menu") else "Normal"
+        speed_delays = {"Fast": 300, "Normal": 650, "Slow": 1200}
+        step_delay = speed_delays.get(speed_choice, 650)
+
         val, trace = self.hash_table.search(search_key, record_trace=True)
-        self.anim_title.configure(text="Search Animation Trace")
+        self.anim_title.configure(text=f"Search Trace — Key {search_key}")
         self.content_tabview.set("Hash Table Visualizer")
 
+        self.reset_visualizer_highlights()
+        total_steps = len(trace)
+
         def run_search_trace(step_idx=0):
-            if step_idx < len(trace):
+            if step_idx < total_steps:
                 step = trace[step_idx]
+                pct = (step_idx + 1) / max(1, total_steps)
+                if hasattr(self, "anim_progress"):
+                    self.anim_progress.set(pct)
+
                 if step["step"] == "input":
-                    self.anim_text.configure(text=f"Searching for User ID: {step['val']}")
+                    self.anim_text.configure(
+                        text=f"▶ Step 1/3: Reading Input Key\nSearching for User ID: {step['val']}",
+                        text_color=self.current_theme["text_primary"]
+                    )
                 elif step["step"] == "hash":
-                    self.anim_text.configure(text=f"Hash Index: {step['index']} (Formula: {step['formula']})")
+                    idx = step.get("index", 0)
+                    formula = step.get("formula", "")
+                    self.anim_text.configure(
+                        text=f"▶ Step 2/3: Hash Mapping\nFormula: {formula} ➔ Target Bucket [{idx:02d}]",
+                        text_color="#FFD54F"
+                    )
+                    self.highlight_visualizer_bucket(idx, color="#00E5FF")
                 elif step["step"] == "done":
                     if step.get("found"):
-                        self.anim_text.configure(text=f"FOUND User {search_key}!\nMovies: {step['value']}", text_color="#2E7D32")
+                        self.anim_text.configure(
+                            text=f"✔ Step 3/3: MATCH FOUND!\nUser {search_key} prefers movies: {step['value']}",
+                            text_color="#00E676"
+                        )
                         self.write_console(f"Search Success: User {search_key} prefers movies {step['value']}")
+                        if search_key in getattr(self, "visualizer_pills", {}):
+                            try:
+                                self.visualizer_pills[search_key].configure(border_color="#00E676", fg_color="#143A24")
+                            except Exception:
+                                pass
                     else:
-                        self.anim_text.configure(text=f"User {search_key} not present.", text_color="#C62828")
+                        self.anim_text.configure(
+                            text=f"✖ Step 3/3: Key Not Present\nUser {search_key} was not found in Hash Table.",
+                            text_color="#FF5252"
+                        )
                         self.write_console(f"Search Failure: User {search_key} not found.")
-                self.after(800, lambda: run_search_trace(step_idx + 1))
+
+                self.after(step_delay, lambda: run_search_trace(step_idx + 1))
+            else:
+                self.after(1800, lambda: self.anim_progress.set(0.0) if hasattr(self, "anim_progress") else None)
 
         run_search_trace(0)
 
@@ -762,12 +1011,47 @@ class App(ctk.CTk):
         )
         header_lbl.pack(anchor="w", padx=10, pady=10)
 
+        # Staggered smooth cascading reveal with flash highlight
+        t = self.current_theme
+        rank_colors = ["#00E5FF", "#FFD54F", "#B388FF", "#00E676", "#FF80AB",
+                       "#80D8FF", "#CCFF90", "#FFD180", "#EA80FC", "#A7FFEB"]
+        cards_to_show = []
         for rank, (m_id, src) in enumerate(zip(recs, sources), start=1):
-            card = ctk.CTkFrame(self.rec_output_frame, fg_color="#202025", border_color="#1F6AA5", border_width=1)
-            card.pack(fill="x", padx=10, pady=4)
+            rc = rank_colors[(rank - 1) % len(rank_colors)]
+            card = ctk.CTkFrame(
+                self.rec_output_frame,
+                fg_color=t["card_inner"],
+                border_color=rc,
+                border_width=1,
+                corner_radius=8
+            )
+            rank_lbl = ctk.CTkLabel(
+                card,
+                text=f"  #{rank}",
+                font=ctk.CTkFont(size=13, weight="bold"),
+                text_color=rc,
+                width=36
+            )
+            rank_lbl.pack(side="left", padx=(8, 4), pady=8)
+            detail_lbl = ctk.CTkLabel(
+                card,
+                text=f"Movie ID {m_id:>4}   ·   via {src}",
+                font=ctk.CTkFont(size=11),
+                text_color=t["text_primary"]
+            )
+            detail_lbl.pack(side="left", padx=4, pady=8)
+            cards_to_show.append((card, rc, t["card_inner"]))
 
-            lbl = ctk.CTkLabel(card, text=f"Rank #{rank}: Movie ID {m_id}  |  Source Strategy: {src}", font=ctk.CTkFont(size=11, weight="bold"))
-            lbl.pack(anchor="w", padx=12, pady=8)
+        def reveal_card(c_idx=0):
+            if c_idx < len(cards_to_show):
+                card, flash_c, base_c = cards_to_show[c_idx]
+                card.pack(fill="x", padx=10, pady=3)
+                # Brief border flash then settle
+                card.configure(border_color="#FFFFFF")
+                self.after(120, lambda c=card, f=flash_c: c.configure(border_color=f))
+                self.after(80, lambda: reveal_card(c_idx + 1))
+
+        reveal_card(0)
 
         self.write_console(f"Generated Top-{top_n} recommendations for User {uid} using {algo}: {recs}")
 
@@ -867,6 +1151,16 @@ class App(ctk.CTk):
         self.console_count_lbl.configure(text_color=t["text_muted"])
         self.btn_copy_console.configure(fg_color=t["console_btn_bg"], hover_color=t["console_btn_hover"])
         self.btn_clear_console.configure(fg_color=t["console_btn_bg"], hover_color=t["console_btn_hover"])
+        if hasattr(self, "btn_wrap"):
+            self.btn_wrap.configure(fg_color=t["console_btn_bg"], hover_color=t["console_btn_hover"])
+            self.btn_font_minus.configure(fg_color=t["console_btn_bg"], hover_color=t["console_btn_hover"])
+            self.btn_font_plus.configure(fg_color=t["console_btn_bg"], hover_color=t["console_btn_hover"])
+            self.console_filter.configure(fg_color=t["console_bg"], border_color=t["console_border"], text_color=t["text_primary"])
+            self.size_segmented.configure(selected_color=t["btn_primary"])
+        if hasattr(self, "anim_progress"):
+            self.anim_progress.configure(progress_color=t["accent"])
+        if hasattr(self, "anim_speed_menu"):
+            self.anim_speed_menu.configure(selected_color=t["btn_primary"])
         self.configure_console_tags()
 
         # Search bar
