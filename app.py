@@ -461,14 +461,7 @@ class App(ctk.CTk):
         self.console_filter.pack(side="left", padx=(0, 6))
         self.console_filter.bind("<KeyRelease>", self.filter_console_logs)
 
-        # Height Selector (S / M / L)
-        self.size_segmented = ctk.CTkSegmentedButton(
-            self.console_right_header, values=["S", "M", "L"], width=70, height=22,
-            font=ctk.CTkFont(size=9, weight="bold"),
-            command=self.change_console_height
-        )
-        self.size_segmented.set("M")
-        self.size_segmented.pack(side="left", padx=(0, 6))
+
 
         # Font Zoom A- / A+
         self.btn_font_minus = ctk.CTkButton(
@@ -570,10 +563,7 @@ class App(ctk.CTk):
         except Exception:
             pass
 
-    def change_console_height(self, size_choice):
-        h = self.console_heights.get(size_choice, 210)
-        self.console_frame.configure(height=h)
-        self.right_frame.update_idletasks()
+
 
     def filter_console_logs(self, event=None):
         query = self.console_filter.get().strip().lower()
@@ -661,6 +651,80 @@ class App(ctk.CTk):
                 pass
         pulse(0)
 
+    # ── UI Animation Helpers ──────────────────────────────────────────────────
+
+    def _btn_flash(self, btn, flash_color: str = "#00E5FF", ms: int = 180):
+        """Briefly flash a button's background to give click feedback."""
+        try:
+            orig = btn.cget("fg_color")
+            btn.configure(fg_color=flash_color)
+            self.after(ms, lambda: btn.configure(fg_color=orig))
+        except Exception:
+            pass
+
+    def _set_busy(self, is_busy: bool, label: str = ""):
+        """Disable/re-enable all sidebar action buttons and animate progress bar."""
+        _sidebar_btns = [
+            "btn_gen_ds", "btn_insert", "btn_visualize", "btn_rec_lab",
+            "btn_lookup", "btn_collision", "btn_numpy", "btn_graphs",
+            "btn_how_it_works", "btn_reset",
+        ]
+        state = "disabled" if is_busy else "normal"
+        for name in _sidebar_btns:
+            try:
+                getattr(self, name).configure(state=state)
+            except Exception:
+                pass
+        if is_busy:
+            if label:
+                try:
+                    self.anim_title.configure(text=label)
+                except Exception:
+                    pass
+            self._start_indeterminate_bar()
+        else:
+            self._stop_indeterminate_bar()
+
+    def _start_indeterminate_bar(self):
+        """Bounce the progress bar back and forth (indeterminate spinner)."""
+        self._indet_active = True
+        self._indet_val = 0.0
+        self._indet_dir = 1
+        accent = self.current_theme.get("accent", "#00E5FF")
+        try:
+            self.anim_progress.configure(progress_color=accent)
+        except Exception:
+            pass
+
+        def _tick():
+            if not getattr(self, "_indet_active", False):
+                return
+            self._indet_val = round(self._indet_val + 0.06 * self._indet_dir, 3)
+            if self._indet_val >= 1.0:
+                self._indet_val = 1.0
+                self._indet_dir = -1
+            elif self._indet_val <= 0.0:
+                self._indet_val = 0.0
+                self._indet_dir = 1
+            try:
+                self.anim_progress.set(self._indet_val)
+            except Exception:
+                pass
+            self.after(28, _tick)
+
+        _tick()
+
+    def _stop_indeterminate_bar(self):
+        """Stop the indeterminate animation and reset bar to zero."""
+        self._indet_active = False
+        try:
+            self.anim_progress.set(0.0)
+            self.anim_progress.configure(progress_color=self.current_theme.get("accent", "#00E5FF"))
+            self.anim_title.configure(text="Operation Step Trace")
+        except Exception:
+            pass
+
+
     def _animate_stat_flash(self, lbl, final_text, flash_color="#00E5FF", normal_color=None):
         """Flash a stat label with a highlight color then restore."""
         if normal_color is None:
@@ -715,10 +779,20 @@ class App(ctk.CTk):
         self.write_console(f"Target Load Factor set to {self.selected_load_factor}.")
 
     def click_generate_dataset(self):
-        self.dataset = generate_structured_data(num_users=self.dataset_size, num_movies=100, seed=42)
-        formatted_txt = format_first_n_users(self.dataset, 10)
-        self.write_console("\n" + "="*50 + "\nStructured Dataset Generated (70-80% Genre Preference Skew)!\n" + "="*50, clear=True)
-        self.write_console(formatted_txt)
+        self._btn_flash(self.btn_gen_ds)
+        self._set_busy(True, "Generating structured dataset...")
+        self.update_idletasks()
+        try:
+            self.dataset = generate_structured_data(num_users=self.dataset_size, num_movies=100, seed=42)
+            formatted_txt = format_first_n_users(self.dataset, 10)
+            self.write_console("\n" + "="*50 + "\nStructured Dataset Generated (70-80% Genre Preference Skew)!\n" + "="*50, clear=True)
+            self.write_console(formatted_txt)
+        finally:
+            self._set_busy(False)
+            self.anim_text.configure(
+                text=f"✔ Dataset ready — {len(self.dataset)} user profiles generated.\nNext: click '2. Populate Hash Table'.",
+                text_color="#00E676"
+            )
 
     def click_insert_table(self):
         if not self.dataset:
@@ -1062,27 +1136,45 @@ class App(ctk.CTk):
         self.write_console(f"Generated Top-{top_n} recommendations for User {uid} using {algo}: {recs}")
 
     def click_run_lookup_benchmark(self):
-        self.write_console("\nRunning Lookup Benchmark...")
-        res = PerformanceSimulator.run_lookup_benchmark([10, 50, 100, 500, 1000], strategy="Both")
-        for strat, data in res.items():
-            self.write_console(f"\n--- {strat} ---")
-            for size, avg_t, coll, mem in data:
-                self.write_console(f"Users: {size:<5} | Avg Lookup: {avg_t*1e6:<8.2f} us | Collisions: {coll:<4} | Mem: {mem} bytes")
+        self._btn_flash(self.btn_lookup)
+        self._set_busy(True, "Running Lookup Benchmark...")
+        self.update_idletasks()
+        try:
+            self.write_console("\nRunning Lookup Benchmark...")
+            res = PerformanceSimulator.run_lookup_benchmark([10, 50, 100, 500, 1000], strategy="Both")
+            for strat, data in res.items():
+                self.write_console(f"\n--- {strat} ---")
+                for size, avg_t, coll, mem in data:
+                    self.write_console(f"Users: {size:<5} | Avg Lookup: {avg_t*1e6:<8.2f} us | Collisions: {coll:<4} | Mem: {mem} bytes")
+        finally:
+            self._set_busy(False)
 
     def click_run_collision_test(self):
-        self.write_console("\nRunning Collision Test...")
-        res = PerformanceSimulator.run_collision_experiment([0.25, 0.50, 0.75, 0.90], strategy="Both")
-        for strat, data in res.items():
-            self.write_console(f"\n--- {strat} ---")
-            for lf, rate, avg_t, mem, extra in data:
-                self.write_console(f"Load Factor: {lf:<4.2f} | Collision Rate: {rate*100:<5.1f}% | Avg Lookup: {avg_t*1e6:.2f} us")
+        self._btn_flash(self.btn_collision)
+        self._set_busy(True, "Running Collision Test...")
+        self.update_idletasks()
+        try:
+            self.write_console("\nRunning Collision Test...")
+            res = PerformanceSimulator.run_collision_experiment([0.25, 0.50, 0.75, 0.90], strategy="Both")
+            for strat, data in res.items():
+                self.write_console(f"\n--- {strat} ---")
+                for lf, rate, avg_t, mem, extra in data:
+                    self.write_console(f"Load Factor: {lf:<4.2f} | Collision Rate: {rate*100:<5.1f}% | Avg Lookup: {avg_t*1e6:.2f} us")
+        finally:
+            self._set_busy(False)
 
     def click_compare_numpy(self):
-        self.write_console("\nRunning NumPy bincount Comparison...")
-        res = PerformanceSimulator.compare_numpy_performance(5000)
-        self.write_console(f"Python List Time: {res['python_list_time']:.6f} sec")
-        self.write_console(f"NumPy bincount Time: {res['numpy_time']:.6f} sec")
-        self.write_console(f"NumPy Speedup: {res['speedup_numpy']:.1f}x")
+        self._btn_flash(self.btn_numpy)
+        self._set_busy(True, "Comparing NumPy vs Python list...")
+        self.update_idletasks()
+        try:
+            self.write_console("\nRunning NumPy bincount Comparison...")
+            res = PerformanceSimulator.compare_numpy_performance(5000)
+            self.write_console(f"Python List Time: {res['python_list_time']:.6f} sec")
+            self.write_console(f"NumPy bincount Time: {res['numpy_time']:.6f} sec")
+            self.write_console(f"NumPy Speedup: {res['speedup_numpy']:.1f}x")
+        finally:
+            self._set_busy(False)
 
     def click_generate_graphs(self):
         """Generate performance charts entirely from the live loaded dataset.
@@ -1092,6 +1184,10 @@ class App(ctk.CTk):
         if not self.dataset:
             messagebox.showwarning("No Dataset", "Please generate and populate a dataset first.")
             return
+
+        self._btn_flash(self.btn_graphs)
+        self._set_busy(True, "Generating performance charts...")
+        self.update_idletasks()
 
         self.content_tabview.set("Performance Charts")
         for f in [self.graph_frame_1, self.graph_frame_2, self.graph_frame_3]:
@@ -1165,6 +1261,7 @@ class App(ctk.CTk):
         c1 = FigureCanvasTkAgg(fig1, master=self.graph_frame_1)
         c1.draw()
         c1.get_tk_widget().pack(fill="both", expand=True)
+        plt.close(fig1)
 
         # ───────────────────────────────────────────────────────────
         # Charts 2 & 3 — Collision Rate / Lookup Time vs. Load Factor
@@ -1193,12 +1290,15 @@ class App(ctk.CTk):
         c2 = FigureCanvasTkAgg(fig2, master=self.graph_frame_2)
         c2.draw()
         c2.get_tk_widget().pack(fill="both", expand=True)
+        plt.close(fig2)
 
         fig3 = graphs.plot_load_factor_vs_lookup_time(collision_data)
         c3 = FigureCanvasTkAgg(fig3, master=self.graph_frame_3)
         c3.draw()
         c3.get_tk_widget().pack(fill="both", expand=True)
+        plt.close(fig3)
 
+        self._set_busy(False)
         self.write_console(
             f"=== Performance Charts — Live Dataset ==="  
             f"\nDataset  : {n} users  |  Strategy : {self.selected_strategy}"
@@ -1262,7 +1362,7 @@ class App(ctk.CTk):
             self.btn_font_minus.configure(fg_color=t["console_btn_bg"], hover_color=t["console_btn_hover"])
             self.btn_font_plus.configure(fg_color=t["console_btn_bg"], hover_color=t["console_btn_hover"])
             self.console_filter.configure(fg_color=t["console_bg"], border_color=t["console_border"], text_color=t["text_primary"])
-            self.size_segmented.configure(selected_color=t["btn_primary"])
+
         if hasattr(self, "anim_progress"):
             self.anim_progress.configure(progress_color=t["accent"])
         if hasattr(self, "anim_speed_menu"):
