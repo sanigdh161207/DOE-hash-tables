@@ -195,7 +195,13 @@ class App(ctk.CTk):
         # Load Factor Target
         self.lf_label = ctk.CTkLabel(self.sidebar_frame, text="Target Load Factor:", font=ctk.CTkFont(size=11, weight="bold"))
         self.lf_label.pack(padx=20, pady=(5, 2), anchor="w")
-        self.lf_segmented = ctk.CTkSegmentedButton(self.sidebar_frame, values=["0.25", "0.50", "0.75", "0.90"], command=self.on_load_factor_change)
+        # Load Factor options stored on self so chart code can read them dynamically
+        self.load_factor_options = [0.25, 0.50, 0.75, 0.90]
+        self.lf_segmented = ctk.CTkSegmentedButton(
+            self.sidebar_frame,
+            values=[str(v) for v in self.load_factor_options],
+            command=self.on_load_factor_change
+        )
         self.lf_segmented.set("0.75")
         self.lf_segmented.pack(padx=20, pady=(0, 10), fill="x")
 
@@ -1079,95 +1085,128 @@ class App(ctk.CTk):
         self.write_console(f"NumPy Speedup: {res['speedup_numpy']:.1f}x")
 
     def click_generate_graphs(self):
+        """Generate performance charts entirely from the live loaded dataset.
+        - No hardcoded sizes or load factors: all derived from current UI state.
+        - Deterministic: same dataset → identical charts every run.
+        """
         if not self.dataset:
             messagebox.showwarning("No Dataset", "Please generate and populate a dataset first.")
             return
 
         self.content_tabview.set("Performance Charts")
         for f in [self.graph_frame_1, self.graph_frame_2, self.graph_frame_3]:
-            for w in f.winfo_children(): w.destroy()
+            for w in f.winfo_children():
+                w.destroy()
 
         import time as _time
         import random as _rng
+        import math as _math
 
         dataset = self.dataset
         n = len(dataset)
+        all_keys = [uid for uid, _ in dataset]
 
-        # ── Chart 1: Lookup time vs. dataset size using LIVE data subsets ──
-        # Pick subset sizes that fit inside the actual loaded dataset
-        candidate_sizes = [10, 50, 100, 250, 500, 1000]
-        sub_sizes = sorted(set([s for s in candidate_sizes if s <= n] + [n]))
+        # ── Deterministic seed derived from actual dataset content ──
+        # Same dataset  → same charts every time.
+        # Different dataset → different charts.
+        data_seed = (sum(all_keys) ^ (n * 31337)) % (2 ** 31)
 
-        lookup_data: dict = {"Separate Chaining": [], "Linear Probing": []}
-        for strat_name, klass in [
+        # ── Lookup benchmark sizes: log-spaced from min(10, n) to n, capped at 6 points ──
+        min_sz = min(10, n)
+        if n <= min_sz:
+            sub_sizes = [n]
+        else:
+            num_points = min(6, n)
+            raw = set()
+            for i in range(num_points):
+                frac = i / max(1, num_points - 1)
+                v = int(min_sz * (_math.exp(_math.log(n / min_sz) * frac)))
+                raw.add(max(min_sz, min(n, v)))
+            raw.add(n)
+            sub_sizes = sorted(raw)
+
+        # ── Load factors: read from UI widget — no hardcoding ──
+        load_factors = list(self.load_factor_options)
+
+        # ── Number of lookups: scales with dataset size (200 – 1000) ──
+        num_lookups = min(1000, max(200, n * 3))
+
+        # ── Strategy map: always benchmark both for comparison ──
+        strategy_pairs = [
             ("Separate Chaining", HashTableChaining),
-            ("Linear Probing", HashTableLinearProbing),
-        ]:
+            ("Linear Probing",   HashTableLinearProbing),
+        ]
+
+        # ───────────────────────────────────────────────────────────
+        # Chart 1 — Lookup Time vs. Dataset Size
+        # ───────────────────────────────────────────────────────────
+        lookup_data: dict = {name: [] for name, _ in strategy_pairs}
+        for strat_name, klass in strategy_pairs:
             for sz in sub_sizes:
                 sub = dataset[:sz]
+                # Table size driven by current UI load factor
                 tsize = max(13, int(sz / self.selected_load_factor))
-                if tsize % 2 == 0:
-                    tsize += 1
+                tsize += (tsize % 2 == 0)  # ensure odd
                 ht = klass(tsize)
                 for uid, movies in sub:
                     ht.insert(uid, movies, record_trace=False)
-                keys = [u for u, _ in sub]
-                lookup_keys = [_rng.choice(keys) for _ in range(500)]
+                sub_keys = [uid for uid, _ in sub]
+                # Deterministic lookup sequence for this (strategy, size) pair
+                _rng.seed(data_seed ^ hash(strat_name) ^ sz)
+                lk = [_rng.choice(sub_keys) for _ in range(num_lookups)]
                 t0 = _time.perf_counter()
-                for k in lookup_keys:
+                for k in lk:
                     ht.search(k, record_trace=False)
-                avg_t = (_time.perf_counter() - t0) / 500
-                stats = ht.get_collision_statistics()
-                mem = ht.estimate_memory_bytes()
-                lookup_data[strat_name].append((sz, avg_t, stats["collisions"], mem))
+                avg_t = (_time.perf_counter() - t0) / num_lookups
+                st = ht.get_collision_statistics()
+                lookup_data[strat_name].append((sz, avg_t, st["collisions"], ht.estimate_memory_bytes()))
 
         fig1 = graphs.plot_lookup_benchmark(lookup_data)
-        canvas1 = FigureCanvasTkAgg(fig1, master=self.graph_frame_1)
-        canvas1.draw()
-        canvas1.get_tk_widget().pack(fill="both", expand=True)
+        c1 = FigureCanvasTkAgg(fig1, master=self.graph_frame_1)
+        c1.draw()
+        c1.get_tk_widget().pack(fill="both", expand=True)
 
-        # ── Charts 2 & 3: Collision rate & lookup time vs. load factor on LIVE data ──
-        load_factors = [0.25, 0.50, 0.75, 0.90]
-        collision_data: dict = {"Separate Chaining": [], "Linear Probing": []}
-        for strat_name, klass in [
-            ("Separate Chaining", HashTableChaining),
-            ("Linear Probing", HashTableLinearProbing),
-        ]:
+        # ───────────────────────────────────────────────────────────
+        # Charts 2 & 3 — Collision Rate / Lookup Time vs. Load Factor
+        # ───────────────────────────────────────────────────────────
+        collision_data: dict = {name: [] for name, _ in strategy_pairs}
+        for strat_name, klass in strategy_pairs:
             for lf in load_factors:
                 tsize = max(13, int(n / lf))
-                if tsize % 2 == 0:
-                    tsize += 1
+                tsize += (tsize % 2 == 0)
                 ht = klass(tsize)
                 for uid, movies in dataset:
                     ht.insert(uid, movies, record_trace=False)
-                keys = [u for u, _ in dataset]
-                lookup_keys = [_rng.choice(keys) for _ in range(500)]
+                # Deterministic lookup sequence for this (strategy, lf) pair
+                _rng.seed(data_seed ^ hash(strat_name) ^ int(lf * 1000))
+                lk = [_rng.choice(all_keys) for _ in range(num_lookups)]
                 t0 = _time.perf_counter()
-                for k in lookup_keys:
+                for k in lk:
                     ht.search(k, record_trace=False)
-                avg_t = (_time.perf_counter() - t0) / 500
-                stats = ht.get_collision_statistics()
-                mem = ht.estimate_memory_bytes()
+                avg_t = (_time.perf_counter() - t0) / num_lookups
+                st = ht.get_collision_statistics()
                 collision_data[strat_name].append(
-                    (lf, stats["collision_rate"], avg_t, mem, {})
+                    (lf, st["collision_rate"], avg_t, ht.estimate_memory_bytes(), {})
                 )
 
         fig2 = graphs.plot_collision_experiment(collision_data)
-        canvas2 = FigureCanvasTkAgg(fig2, master=self.graph_frame_2)
-        canvas2.draw()
-        canvas2.get_tk_widget().pack(fill="both", expand=True)
+        c2 = FigureCanvasTkAgg(fig2, master=self.graph_frame_2)
+        c2.draw()
+        c2.get_tk_widget().pack(fill="both", expand=True)
 
         fig3 = graphs.plot_load_factor_vs_lookup_time(collision_data)
-        canvas3 = FigureCanvasTkAgg(fig3, master=self.graph_frame_3)
-        canvas3.draw()
-        canvas3.get_tk_widget().pack(fill="both", expand=True)
+        c3 = FigureCanvasTkAgg(fig3, master=self.graph_frame_3)
+        c3.draw()
+        c3.get_tk_widget().pack(fill="both", expand=True)
 
         self.write_console(
-            f"=== Charts generated from live dataset ===\n"
-            f"Dataset: {n} users  |  Strategy: {self.selected_strategy}  |  Load Factor: {self.selected_load_factor}\n"
-            f"Lookup benchmark sizes: {sub_sizes}\n"
-            f"Collision test load factors: {load_factors}"
+            f"=== Performance Charts — Live Dataset ==="  
+            f"\nDataset  : {n} users  |  Strategy : {self.selected_strategy}"
+            f"\nLF target: {self.selected_load_factor}  |  Lookups/test: {num_lookups}"
+            f"\nBenchmark sizes : {sub_sizes}"
+            f"\nLoad factors    : {load_factors}"
         )
+
 
     def click_how_it_works(self):
         from app import EduPopup
