@@ -1079,17 +1079,79 @@ class App(ctk.CTk):
         self.write_console(f"NumPy Speedup: {res['speedup_numpy']:.1f}x")
 
     def click_generate_graphs(self):
+        if not self.dataset:
+            messagebox.showwarning("No Dataset", "Please generate and populate a dataset first.")
+            return
+
         self.content_tabview.set("Performance Charts")
         for f in [self.graph_frame_1, self.graph_frame_2, self.graph_frame_3]:
             for w in f.winfo_children(): w.destroy()
 
-        lookup_data = PerformanceSimulator.run_lookup_benchmark([10, 50, 100, 500], strategy="Both")
+        import time as _time
+        import random as _rng
+
+        dataset = self.dataset
+        n = len(dataset)
+
+        # ── Chart 1: Lookup time vs. dataset size using LIVE data subsets ──
+        # Pick subset sizes that fit inside the actual loaded dataset
+        candidate_sizes = [10, 50, 100, 250, 500, 1000]
+        sub_sizes = sorted(set([s for s in candidate_sizes if s <= n] + [n]))
+
+        lookup_data: dict = {"Separate Chaining": [], "Linear Probing": []}
+        for strat_name, klass in [
+            ("Separate Chaining", HashTableChaining),
+            ("Linear Probing", HashTableLinearProbing),
+        ]:
+            for sz in sub_sizes:
+                sub = dataset[:sz]
+                tsize = max(13, int(sz / self.selected_load_factor))
+                if tsize % 2 == 0:
+                    tsize += 1
+                ht = klass(tsize)
+                for uid, movies in sub:
+                    ht.insert(uid, movies, record_trace=False)
+                keys = [u for u, _ in sub]
+                lookup_keys = [_rng.choice(keys) for _ in range(500)]
+                t0 = _time.perf_counter()
+                for k in lookup_keys:
+                    ht.search(k, record_trace=False)
+                avg_t = (_time.perf_counter() - t0) / 500
+                stats = ht.get_collision_statistics()
+                mem = ht.estimate_memory_bytes()
+                lookup_data[strat_name].append((sz, avg_t, stats["collisions"], mem))
+
         fig1 = graphs.plot_lookup_benchmark(lookup_data)
         canvas1 = FigureCanvasTkAgg(fig1, master=self.graph_frame_1)
         canvas1.draw()
         canvas1.get_tk_widget().pack(fill="both", expand=True)
 
-        collision_data = PerformanceSimulator.run_collision_experiment([0.25, 0.50, 0.75, 0.90], strategy="Both")
+        # ── Charts 2 & 3: Collision rate & lookup time vs. load factor on LIVE data ──
+        load_factors = [0.25, 0.50, 0.75, 0.90]
+        collision_data: dict = {"Separate Chaining": [], "Linear Probing": []}
+        for strat_name, klass in [
+            ("Separate Chaining", HashTableChaining),
+            ("Linear Probing", HashTableLinearProbing),
+        ]:
+            for lf in load_factors:
+                tsize = max(13, int(n / lf))
+                if tsize % 2 == 0:
+                    tsize += 1
+                ht = klass(tsize)
+                for uid, movies in dataset:
+                    ht.insert(uid, movies, record_trace=False)
+                keys = [u for u, _ in dataset]
+                lookup_keys = [_rng.choice(keys) for _ in range(500)]
+                t0 = _time.perf_counter()
+                for k in lookup_keys:
+                    ht.search(k, record_trace=False)
+                avg_t = (_time.perf_counter() - t0) / 500
+                stats = ht.get_collision_statistics()
+                mem = ht.estimate_memory_bytes()
+                collision_data[strat_name].append(
+                    (lf, stats["collision_rate"], avg_t, mem, {})
+                )
+
         fig2 = graphs.plot_collision_experiment(collision_data)
         canvas2 = FigureCanvasTkAgg(fig2, master=self.graph_frame_2)
         canvas2.draw()
@@ -1100,7 +1162,12 @@ class App(ctk.CTk):
         canvas3.draw()
         canvas3.get_tk_widget().pack(fill="both", expand=True)
 
-        self.write_console("Generated performance charts successfully.")
+        self.write_console(
+            f"=== Charts generated from live dataset ===\n"
+            f"Dataset: {n} users  |  Strategy: {self.selected_strategy}  |  Load Factor: {self.selected_load_factor}\n"
+            f"Lookup benchmark sizes: {sub_sizes}\n"
+            f"Collision test load factors: {load_factors}"
+        )
 
     def click_how_it_works(self):
         from app import EduPopup
