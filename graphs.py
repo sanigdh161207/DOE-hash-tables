@@ -1,6 +1,6 @@
 import os
 import matplotlib
-matplotlib.use("TkAgg" if os.environ.get("DISPLAY") else "Agg")
+matplotlib.use("Agg")  # Always use headless backend — no display server required
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import List, Tuple, Dict, Union, Any

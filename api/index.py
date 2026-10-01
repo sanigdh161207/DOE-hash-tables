@@ -2,7 +2,7 @@ import os
 import sys
 import time
 import math
-import traceback
+import logging
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 
@@ -15,6 +15,7 @@ from fastapi import FastAPI, APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from data_generator import generate_structured_data, get_movie_genres, format_first_n_users
 from recommender import (
@@ -26,10 +27,14 @@ from extendible_hashing import ExtendibleHashTable
 from sparse_recommender import SparseRecommender
 from simulator import PerformanceSimulator
 
+# Setup structured logger
+logger = logging.getLogger("hash_table_simulator")
+logging.basicConfig(level=logging.INFO)
+
 app = FastAPI(
     title="Hash Table Recommender Simulator API",
     description="Interactive backend for Hash Table Simulator & Recommender Lab",
-    version="1.0.0"
+    version="1.1.0"
 )
 
 app.add_middleware(
@@ -40,25 +45,32 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Vercel Path Normalization Middleware
+# Path-strip middleware: strips leading /api prefix so routes work both locally
+# (frontend calls /api/health) and on Vercel (which strips /api before routing).
 @app.middleware("http")
-async def vercel_path_fix(request: Request, call_next):
+async def strip_api_prefix(request: Request, call_next):
     path = request.scope.get("path", "")
-    if path.startswith("/api/index.py"):
-        new_path = path[len("/api/index.py"):]
-        request.scope["path"] = new_path if new_path else "/"
+    if path.startswith("/api/"):
+        request.scope["path"] = path[4:]  # /api/health → /health
+    elif path == "/api":
+        request.scope["path"] = "/"
     return await call_next(request)
 
-# Global Exception Handler for debugging serverless errors
+
+# Safe Production Error Responses (No sensitive stack traces or file paths leaked to client)
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail, "path": request.url.path}
+    )
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    err_msg = str(exc)
-    err_trace = traceback.format_exc()
-    print(f"Error handling {request.method} {request.url.path}: {err_msg}")
-    print(err_trace)
+    logger.error(f"Internal server error processing {request.method} {request.url.path}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
-        content={"detail": err_msg, "trace": err_trace, "path": request.url.path}
+        content={"detail": "Internal server error. Check server logs for details.", "path": request.url.path}
     )
 
 GENRE_NAMES = {
@@ -101,12 +113,10 @@ def build_hash_table(strategy: str, size_mode: str, custom_size: int, target_lf:
         calculated_size = max(10, int(math.ceil(n_users / max(0.01, target_lf))))
 
     if strategy == "Extendible Hashing":
-        table = ExtendibleHashTable(capacity=4)
-        for uid, items in dataset:
-            table.insert(uid, items, record_trace=False)
-        rec_sys = RecommenderSystem(table_size=calculated_size, strategy_class=HashTableChaining)
+        # ExtendibleHashTable uses table_size=4, bucket_capacity=4
+        rec_sys = RecommenderSystem(table_size=4, strategy_class=ExtendibleHashTable)
         rec_sys.fit(dataset, num_movies=100)
-        rec_sys.hash_table = table
+        table = rec_sys.hash_table
     else:
         strat_cls = HashTableLinearProbing if strategy == "Linear Probing" else HashTableChaining
         rec_sys = RecommenderSystem(table_size=calculated_size, strategy_class=strat_cls)
@@ -120,7 +130,7 @@ def build_hash_table(strategy: str, size_mode: str, custom_size: int, target_lf:
         sparse_rec.fit(dataset)
         STATE["sparse_recommender"] = sparse_rec
     except Exception as e:
-        print(f"Warning: SparseRecommender initialization skipped: {e}")
+        logger.warning(f"SparseRecommender initialization skipped: {e}")
         STATE["sparse_recommender"] = None
 
     STATE["selected_strategy"] = strategy
@@ -170,8 +180,39 @@ def get_state():
         "target_lf": STATE["target_lf"]
     }
 
+@router.post("/reset")
+def reset_state():
+    """
+    Clears all in-memory simulator state, ensuring deterministic and fresh simulation cycles.
+    """
+    STATE["dataset"] = None
+    STATE["user_ids"] = []
+    STATE["hash_table"] = None
+    STATE["recommender"] = None
+    STATE["sparse_recommender"] = None
+    STATE["selected_strategy"] = "Separate Chaining"
+    STATE["dataset_size"] = 100
+    STATE["target_lf"] = 0.75
+    STATE["calculated_size"] = 0
+    STATE["seed"] = 42
+    return {
+        "success": True,
+        "message": "Simulator state has been completely reset.",
+        "state": {
+            "has_dataset": False,
+            "has_table": False,
+            "dataset_size": 0,
+            "user_ids": []
+        }
+    }
+
 @router.post("/generate-data")
 def generate_data(req: GenerateRequest):
+    # Invalidate previous derived data structures to prevent stale lookups or inconsistencies
+    STATE["hash_table"] = None
+    STATE["recommender"] = None
+    STATE["sparse_recommender"] = None
+
     dataset = ensure_dataset(n_users=req.num_users, seed=req.seed, force=True)
     genres = get_movie_genres(100, 5, seed=42)
     
@@ -189,7 +230,9 @@ def generate_data(req: GenerateRequest):
         "total_users": len(dataset),
         "seed": req.seed,
         "preview": preview,
-        "all_user_ids": [u[0] for u in dataset]
+        "all_user_ids": [u[0] for u in dataset],
+        "state_invalidated": True,
+        "message": "New dataset generated. Populate the hash table to continue."
     }
 
 @router.post("/populate")
@@ -204,31 +247,82 @@ def populate_table(req: PopulateRequest):
     )
     
     total_users = len(STATE["dataset"])
-    table_size = table.size if hasattr(table, "size") else len(getattr(table, "directory", []))
-    load_factor = round(table.load_factor(), 4) if hasattr(table, "load_factor") else round(total_users / max(1, table_size), 4)
-    
-    try:
-        collisions = table.collision_count()
-    except Exception:
-        collisions = 0
-    
-    collision_rate = round((collisions / total_users * 100), 2) if total_users > 0 else 0.0
+    is_extendible = isinstance(table, ExtendibleHashTable)
 
-    avg_bucket_len = 0.0
-    max_bucket_len = 0
-    memory_bytes = 0
-    
-    if hasattr(table, "buckets"):
+    if is_extendible:
+        ext_stats = table.get_collision_statistics()
+        table_size = ext_stats["directory_size"]
+        load_factor = round(ext_stats["bucket_utilization"], 4)
+        collisions = ext_stats["collisions"]
+        collision_rate = round(ext_stats["collision_rate"] * 100, 2)
+        avg_bucket_len = round(ext_stats["avg_bucket_length"], 2)
+        max_bucket_len = ext_stats["max_bucket_length"]
+        memory_bytes = table.estimate_memory_bytes()
+        
+        stats = {
+            "total_users": total_users,
+            "table_size": table_size,
+            "directory_size": ext_stats["directory_size"],
+            "global_depth": ext_stats["global_depth"],
+            "num_unique_buckets": ext_stats["num_unique_buckets"],
+            "bucket_capacity": ext_stats["bucket_capacity"],
+            "total_physical_capacity": ext_stats["total_physical_capacity"],
+            "bucket_utilization": load_factor,
+            "load_factor": load_factor,
+            "directory_load_factor": round(ext_stats["directory_load_factor"], 4),
+            "collisions": collisions,
+            "collision_rate_pct": collision_rate,
+            "avg_bucket_len": avg_bucket_len,
+            "max_bucket_len": max_bucket_len,
+            "splits_count": ext_stats["splits_count"],
+            "directory_doublings": ext_stats["directory_doublings"],
+            "memory_bytes": memory_bytes,
+            "is_extendible": True
+        }
+
+        # Directory layout mapping directory index -> physical bucket
+        buckets_data = {
+            "global_depth": table.global_depth,
+            "directory_size": len(table.directory),
+            "directory": [
+                {
+                    "dir_index": i,
+                    "bin_index": f"{i:0{table.global_depth}b}",
+                    "bucket_id": id(b),
+                    "local_depth": b.local_depth,
+                    "capacity": b.capacity,
+                    "items": [{"key": k, "count": len(v), "preview": v[:4]} for k, v in b.items]
+                }
+                for i, b in enumerate(table.directory)
+            ]
+        }
+    else:
+        table_size = table.size
+        load_factor = round(table.load_factor(), 4)
+        try:
+            collisions = table.collision_count()
+        except Exception:
+            collisions = 0
+        
+        collision_rate = round((collisions / total_users * 100), 2) if total_users > 0 else 0.0
+
         lens = [len(b) if isinstance(b, list) else (1 if b else 0) for b in table.buckets]
         avg_bucket_len = round(sum(lens) / max(1, len(lens)), 2)
         max_bucket_len = max(lens) if lens else 0
         memory_bytes = table.estimate_memory_bytes()
-    elif isinstance(table, ExtendibleHashTable):
-        memory_bytes = table.estimate_memory_bytes()
 
-    is_extendible = isinstance(table, ExtendibleHashTable)
-    
-    if not is_extendible:
+        stats = {
+            "total_users": total_users,
+            "table_size": table_size,
+            "load_factor": load_factor,
+            "collisions": collisions,
+            "collision_rate_pct": collision_rate,
+            "avg_bucket_len": avg_bucket_len,
+            "max_bucket_len": max_bucket_len,
+            "memory_bytes": memory_bytes,
+            "is_extendible": False
+        }
+
         limit = min(table.size, 100)
         buckets_data = []
         for idx in range(limit):
@@ -247,35 +341,11 @@ def populate_table(req: PopulateRequest):
                 "is_empty": len(items) == 0,
                 "is_collision": len(items) > 1
             })
-    else:
-        buckets_data = {
-            "global_depth": table.global_depth,
-            "directory_size": len(table.directory),
-            "directory": [
-                {
-                    "dir_index": i,
-                    "bin_index": f"{i:0{table.global_depth}b}",
-                    "bucket_id": id(b),
-                    "local_depth": b.local_depth,
-                    "items": [{"key": k, "count": len(v), "preview": v[:4]} for k, v in b.items]
-                }
-                for i, b in enumerate(table.directory)
-            ]
-        }
 
     return {
         "success": True,
         "strategy": req.strategy,
-        "stats": {
-            "total_users": total_users,
-            "table_size": table_size,
-            "load_factor": load_factor,
-            "collisions": collisions,
-            "collision_rate_pct": collision_rate,
-            "avg_bucket_len": avg_bucket_len,
-            "max_bucket_len": max_bucket_len,
-            "memory_bytes": memory_bytes
-        },
+        "stats": stats,
         "is_extendible": is_extendible,
         "buckets": buckets_data,
         "user_ids": STATE["user_ids"]
@@ -284,15 +354,56 @@ def populate_table(req: PopulateRequest):
 @router.post("/search")
 def search_key(req: SearchRequest):
     if STATE["hash_table"] is None:
-        build_hash_table("Separate Chaining", "Auto", 150, 0.75, 100, 42)
+        raise HTTPException(
+            status_code=400,
+            detail="Hash table is not populated. Please generate structured data and click '2. Populate Hash Table' first."
+        )
 
     table = STATE["hash_table"]
     t0 = time.perf_counter()
-    val, trace = table.search(req.key, record_trace=True)
+    val, raw_trace = table.search(req.key, record_trace=True)
     latency_us = round((time.perf_counter() - t0) * 1e6, 2)
     
     found = val is not None
     hash_val = table.hash_function(req.key) if hasattr(table, "hash_function") else None
+
+    # Normalize trace steps ensuring index, bucket, action, and details are uniformly present
+    normalized_trace = []
+    for i, step in enumerate(raw_trace):
+        step_copy = dict(step)
+        bucket_idx = step.get("index", step.get("bucket", step.get("bucket_idx")))
+        step_copy["index"] = bucket_idx
+        step_copy["bucket"] = bucket_idx
+        step_copy["step_num"] = i + 1
+
+        st = step.get("step")
+        if st == "input":
+            step_copy["action"] = "Key Input"
+            step_copy["details"] = f"Initiating lookup for User ID #{req.key}"
+        elif st == "hash":
+            formula = step.get("formula", f"hash({req.key})")
+            step_copy["action"] = "Hash Computation"
+            step_copy["details"] = f"Target slot {bucket_idx} computed using {formula}"
+        elif st == "compare":
+            matched = step.get("matched", False)
+            curr = step.get("current_key")
+            step_copy["action"] = "Chain Node Check"
+            step_copy["details"] = f"Inspecting key #{curr} in slot {bucket_idx} — {'MATCH FOUND' if matched else 'Collision (mismatch, following pointer)'}"
+        elif st == "probe_search":
+            state = step.get("state", "probe")
+            matched = step.get("matched", False)
+            probes = step.get("probes", 0)
+            step_copy["action"] = f"Linear Probe #{probes}"
+            step_copy["details"] = f"Slot {bucket_idx} is {state} — {'MATCH FOUND' if matched else 'Checking next sequential slot'}"
+        elif st == "done":
+            is_found = step.get("found", found)
+            step_copy["action"] = "Lookup Complete"
+            step_copy["details"] = f"Result: {'Record successfully located' if is_found else 'Key not present in table'}"
+        else:
+            step_copy["action"] = step.get("action", f"Step {i + 1}")
+            step_copy["details"] = step.get("details", f"Processing slot {bucket_idx}")
+
+        normalized_trace.append(step_copy)
 
     return {
         "key": req.key,
@@ -301,13 +412,16 @@ def search_key(req: SearchRequest):
         "items_count": len(val) if found and isinstance(val, list) else 0,
         "hash_val": hash_val,
         "latency_us": latency_us,
-        "trace": trace
+        "trace": normalized_trace
     }
 
 @router.post("/recommend")
 def get_recommendations(req: RecommendRequest):
     if STATE["recommender"] is None or STATE["hash_table"] is None:
-        build_hash_table("Separate Chaining", "Auto", 150, 0.75, 100, 42)
+        raise HTTPException(
+            status_code=400,
+            detail="Recommender engine is not initialized. Please click '2. Populate Hash Table' first."
+        )
 
     recommender = STATE["recommender"]
     sparse_rec = STATE["sparse_recommender"]
@@ -418,11 +532,11 @@ def benchmark_numpy():
         "speedup": round(res["speedup_numpy"], 2)
     }
 
-# Mount both with /api prefix and at root so Vercel routing works regardless of path stripping
-app.include_router(router, prefix="/api")
+# Mount router at root only — Vercel strips /api prefix before hitting this function.
+# For local dev via server.py, the prefix is also root since server.py passes all /api/* requests here.
 app.include_router(router, prefix="")
 
-# Mount static files for local server.py development
+# Mount static files LAST so API routes take precedence (local dev only).
 PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 if os.path.exists(PUBLIC_DIR):
     app.mount("/", StaticFiles(directory=PUBLIC_DIR, html=True), name="static")

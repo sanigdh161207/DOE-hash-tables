@@ -172,11 +172,33 @@ async function handleGenerateData() {
     });
     
     state.userList = res.all_user_ids;
+    state.tableData = null; // Invalidate previously built hash table
     updateUserDropdowns(res.all_user_ids);
     
+    // Reset table metrics until user populates
     el.statUsers.innerText = res.total_users;
+    el.statTableSize.innerText = '-';
+    el.statLoadFactor.innerText = '-';
+    el.statCollisions.innerText = '-';
+    el.statCollisionRate.innerText = '-';
+    el.statAvgBucket.innerText = '-';
+    el.statMaxBucket.innerText = '-';
+    el.statMemory.innerText = '-';
+
+    // Invalidate visualizer view
+    el.visEmptyState.style.display = 'flex';
+    el.visEmptyState.innerHTML = `
+      <div class="empty-state-icon">⚡</div>
+      <h3>New Dataset Generated (${res.total_users} Users)</h3>
+      <p style="color:var(--accent-amber);">Previous table structures invalidated. Click <strong>"2. Populate Hash Table"</strong> to index this dataset.</p>
+    `;
+    el.bucketsGrid.style.display = 'none';
+    el.bucketsGrid.innerHTML = '';
+
+    el.recItemsList.innerHTML = '<p class="empty-note">Table unpopulated. Click "2. Populate Hash Table" to activate recommendation engine.</p>';
+
     log(`✔ Generated ${res.total_users} unique user interaction profiles (Seed ${res.seed}).`, 'success');
-    log(`Dataset preview: first user ID #${res.preview[0].user_id} has ${res.preview[0].items_count} interactions.`, 'data');
+    log("New dataset generated. Populate the hash table to continue.", 'warning');
   } catch (err) {
     log(`Failed to generate data: ${err.message}`, 'error');
   }
@@ -196,35 +218,59 @@ async function handlePopulateTable() {
     });
 
     state.tableData = res;
-    updateStats(res.stats);
+    state.userList = res.user_ids;
+    updateUserDropdowns(res.user_ids);
+    updateStats(res.stats, res.is_extendible);
     renderVisualizer(res);
     switchTab('tab-visualizer');
     
     log(`✔ Successfully indexed ${res.stats.total_users} users into ${res.strategy}.`, 'success');
-    log(`Stats: Table Size = ${res.stats.table_size} | Load Factor = ${res.stats.load_factor} | Collisions = ${res.stats.collisions} (${res.stats.collision_rate_pct}%)`, 'data');
+    if (res.is_extendible) {
+      log(`Extendible Stats: Directory = ${res.stats.directory_size} | Unique Buckets = ${res.stats.num_unique_buckets} | Utilization = ${(res.stats.bucket_utilization * 100).toFixed(1)}% | Splits = ${res.stats.splits_count}`, 'data');
+    } else {
+      log(`Stats: Table Size = ${res.stats.table_size} | Load Factor = ${res.stats.load_factor} | Collisions = ${res.stats.collisions} (${res.stats.collision_rate_pct}%)`, 'data');
+    }
   } catch (err) {
     log(`Population failed: ${err.message}`, 'error');
   }
 }
 
-function updateStats(stats) {
+function updateStats(stats, isExtendible = false) {
   el.statUsers.innerText = stats.total_users;
-  el.statTableSize.innerText = stats.table_size;
-  el.statLoadFactor.innerText = stats.load_factor.toFixed(2);
-  el.statCollisions.innerText = stats.collisions;
-  el.statCollisionRate.innerText = `${stats.collision_rate_pct}%`;
-  el.statAvgBucket.innerText = stats.avg_bucket_len;
-  el.statMaxBucket.innerText = stats.max_bucket_len;
-  el.statMemory.innerText = formatBytes(stats.memory_bytes);
+
+  if (isExtendible) {
+    el.statTableSize.innerText = `${stats.directory_size} (Dir)`;
+    el.statLoadFactor.innerText = `${(stats.bucket_utilization * 100).toFixed(1)}%`;
+    el.statLoadFactor.title = "Bucket Utilization: Records / (Unique Buckets * Capacity)";
+    el.statCollisions.innerText = `${stats.splits_count} Splits`;
+    el.statCollisionRate.innerText = `${stats.num_unique_buckets} Bkts`;
+    el.statAvgBucket.innerText = `Cap ${stats.bucket_capacity}`;
+    el.statMaxBucket.innerText = `d = ${stats.global_depth}`;
+    el.statMemory.innerText = formatBytes(stats.memory_bytes);
+  } else {
+    el.statTableSize.innerText = stats.table_size;
+    el.statLoadFactor.innerText = typeof stats.load_factor === 'number' ? stats.load_factor.toFixed(2) : stats.load_factor;
+    el.statLoadFactor.title = "Load Factor: Records / Table Size";
+    el.statCollisions.innerText = stats.collisions;
+    el.statCollisionRate.innerText = `${stats.collision_rate_pct}%`;
+    el.statAvgBucket.innerText = stats.avg_bucket_len;
+    el.statMaxBucket.innerText = stats.max_bucket_len;
+    el.statMemory.innerText = formatBytes(stats.memory_bytes);
+  }
 }
 
 function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return '0 B';
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1048576).toFixed(2)} MB`;
 }
 
 function updateUserDropdowns(userIds) {
+  if (!userIds || userIds.length === 0) {
+    el.recUserSelect.innerHTML = '<option value="">No users available</option>';
+    return;
+  }
   el.recUserSelect.innerHTML = '';
   userIds.slice(0, 100).forEach(uid => {
     const opt = document.createElement('option');
@@ -244,12 +290,14 @@ function renderVisualizer(data) {
   el.bucketsGrid.innerHTML = '';
 
   el.visTitle.innerText = `${data.strategy} — Bucket Inspector`;
-  el.visSubtitle.innerText = `Displaying bucket layout for ${data.stats.total_users} keys across ${data.stats.table_size} table slots.`;
 
   if (data.is_extendible) {
+    el.visSubtitle.innerText = `Extendible Directory: Global Depth = ${data.stats.global_depth} (${data.stats.directory_size} slots) ➔ ${data.stats.num_unique_buckets} physical buckets. True bucket utilization: ${(data.stats.bucket_utilization * 100).toFixed(1)}%.`;
     renderExtendibleGrid(data.buckets);
     return;
   }
+
+  el.visSubtitle.innerText = `Displaying bucket layout for ${data.stats.total_users} keys across ${data.stats.table_size} table slots.`;
 
   data.buckets.forEach(bucket => {
     const row = document.createElement('div');
@@ -278,7 +326,7 @@ function renderVisualizer(data) {
       bucket.items.forEach((item, i) => {
         const pill = document.createElement('div');
         pill.className = 'user-node-pill';
-        pill.title = `User ${item.key}: Movies [${item.preview.join(', ')}...]`;
+        pill.title = `Click to search User ${item.key}: Movies [${item.preview.join(', ')}...]`;
         pill.innerHTML = `
           <span class="pill-user">User ${item.key}</span>
           <span class="pill-count">${item.count} movies</span>
@@ -310,25 +358,56 @@ function renderExtendibleGrid(extData) {
 
   const meta = document.createElement('div');
   meta.className = 'dir-meta';
-  meta.innerText = `Extendible Directory Global Depth = ${extData.global_depth} (Directory size: ${extData.directory_size})`;
+  meta.innerText = `Extendible Directory Global Depth = ${extData.global_depth} (Directory size: ${extData.directory_size} pointer slots)`;
   container.appendChild(meta);
 
   extData.directory.forEach(dir => {
     const row = document.createElement('div');
     row.className = 'bucket-row';
-    row.innerHTML = `
-      <div class="bucket-idx-badge">[${dir.bin_index}] Dir #${dir.dir_index}</div>
-      <div class="bucket-arrow">➔</div>
-      <div class="bucket-nodes">
-        <span style="font-size:11px; color:#d8b4fe; margin-right:8px;">Local Depth ${dir.local_depth}:</span>
-        ${dir.items.map(it => `
-          <div class="user-node-pill">
-            <span class="pill-user">User ${it.key}</span>
-            <span class="pill-count">${it.count} movies</span>
-          </div>
-        `).join('')}
-      </div>
-    `;
+    row.id = `bucket-row-${dir.dir_index}`;
+
+    const idxBadge = document.createElement('div');
+    idxBadge.className = 'bucket-idx-badge';
+    idxBadge.innerText = `[${dir.bin_index}] #${dir.dir_index}`;
+    row.appendChild(idxBadge);
+
+    const arrow = document.createElement('div');
+    arrow.className = 'bucket-arrow';
+    arrow.innerText = '➔';
+    row.appendChild(arrow);
+
+    const nodesContainer = document.createElement('div');
+    nodesContainer.className = 'bucket-nodes';
+
+    const depthBadge = document.createElement('span');
+    depthBadge.style.cssText = 'font-size:11px; color:#d8b4fe; margin-right:8px; font-weight:600;';
+    depthBadge.innerText = `Bucket Local Depth ${dir.local_depth} (${dir.items.length}/${dir.capacity}):`;
+    nodesContainer.appendChild(depthBadge);
+
+    if (dir.items.length === 0) {
+      const emptyPill = document.createElement('div');
+      emptyPill.className = 'empty-slot-pill';
+      emptyPill.innerText = '[ Empty Bucket ]';
+      nodesContainer.appendChild(emptyPill);
+    } else {
+      dir.items.forEach(item => {
+        const pill = document.createElement('div');
+        pill.className = 'user-node-pill';
+        pill.title = `Click to search User ${item.key}: Movies [${item.preview.join(', ')}...]`;
+        pill.innerHTML = `
+          <span class="pill-user">User ${item.key}</span>
+          <span class="pill-count">${item.count} movies</span>
+        `;
+        pill.addEventListener('click', () => {
+          el.searchKeyInput.value = item.key;
+          switchTab('tab-search');
+          handleSearch();
+        });
+        nodesContainer.appendChild(pill);
+      });
+    }
+
+    row.appendChild(nodesContainer);
     container.appendChild(row);
   });
 
@@ -337,6 +416,11 @@ function renderExtendibleGrid(extData) {
 
 // ── SEARCH & STEP TRACE ──
 async function handleSearch() {
+  if (!state.tableData) {
+    alert('Please populate the hash table first before searching.');
+    return;
+  }
+
   const key = parseInt(el.searchKeyInput.value);
   if (isNaN(key)) {
     alert('Please enter a valid numeric User ID.');
@@ -368,30 +452,45 @@ async function handleSearch() {
 function animateTrace(trace, found, val) {
   el.traceStepsContainer.innerHTML = '';
   const speed = el.animSpeedSelect.value;
-  const delay = speed === 'Fast' ? 200 : speed === 'Slow' ? 1000 : 500;
+  const delay = speed === 'Fast' ? 180 : speed === 'Slow' ? 800 : 400;
 
   trace.forEach((step, idx) => {
     setTimeout(() => {
       const card = document.createElement('div');
       const isLast = idx === trace.length - 1;
-      const statusClass = isLast ? (found ? 'success' : 'failure') : 'probe';
-      card.className = `step-card ${statusClass}`;
       
+      let statusClass = 'probe';
+      if (step.matched || (isLast && found)) {
+        statusClass = 'success';
+      } else if (isLast && !found) {
+        statusClass = 'failure';
+      }
+
+      const bucketIdx = (step.index !== undefined && step.index !== null) ? step.index 
+                      : (step.bucket !== undefined && step.bucket !== null) ? step.bucket 
+                      : (step.bucket_idx !== undefined && step.bucket_idx !== null) ? step.bucket_idx 
+                      : 'N/A';
+
+      const stepTitle = step.action || `Step ${step.step_num || idx + 1}`;
+      const stepDetails = step.details || (step.matched ? 'Key matched record!' : (isLast && !found ? 'Key not found in table.' : 'Inspecting bucket slot...'));
+
+      card.className = `step-card ${statusClass}`;
       card.innerHTML = `
-        <span class="step-num">Step ${step.step || idx + 1}</span>
+        <span class="step-num">#${step.step_num || idx + 1}</span>
         <div class="step-details">
-          <strong>${step.action || 'Probing Bucket'}:</strong> Bucket Index ${step.bucket !== undefined ? step.bucket : 'N/A'}. 
-          <span>${step.details || (step.found ? 'Key matched target record.' : 'Collision / checking next element.')}</span>
+          <strong>${stepTitle}:</strong> ${bucketIdx !== 'N/A' ? `Slot ${bucketIdx} · ` : ''}<span>${stepDetails}</span>
         </div>
       `;
       el.traceStepsContainer.appendChild(card);
       el.traceStepsContainer.scrollTop = el.traceStepsContainer.scrollHeight;
 
-      // Highlight row in visualizer if available
-      const row = document.getElementById(`bucket-row-${step.bucket}`);
-      if (row) {
-        document.querySelectorAll('.bucket-row.highlighted').forEach(r => r.classList.remove('highlighted'));
-        row.classList.add('highlighted');
+      // Highlight corresponding row in visualizer
+      if (bucketIdx !== 'N/A') {
+        const row = document.getElementById(`bucket-row-${bucketIdx}`);
+        if (row) {
+          document.querySelectorAll('.bucket-row.highlighted').forEach(r => r.classList.remove('highlighted'));
+          row.classList.add('highlighted');
+        }
       }
     }, idx * delay);
   });
@@ -399,9 +498,14 @@ function animateTrace(trace, found, val) {
 
 // ── RECOMMENDER LAB ──
 async function handleGenerateRecs() {
+  if (!state.tableData) {
+    alert('Please populate the hash table first before generating recommendations.');
+    return;
+  }
+
   const uid = parseInt(el.recUserSelect.value);
   if (isNaN(uid)) {
-    alert('Please populate the hash table first to select a user.');
+    alert('Please select a valid User ID.');
     return;
   }
 
@@ -728,7 +832,13 @@ function setupEventListeners() {
 
   el.btnHowItWorks.addEventListener('click', () => switchTab('tab-edu'));
 
-  el.btnReset.addEventListener('click', () => {
+  // Reset button: syncs with backend /api/reset
+  el.btnReset.addEventListener('click', async () => {
+    try {
+      await apiCall('/api/reset', 'POST');
+    } catch (e) {
+      console.warn("Backend reset notification failed", e);
+    }
     state.userList = [];
     state.tableData = null;
     el.statUsers.innerText = '0';
@@ -740,12 +850,22 @@ function setupEventListeners() {
     el.statMaxBucket.innerText = '0';
     el.statMemory.innerText = '0 B';
     el.visEmptyState.style.display = 'flex';
+    el.visEmptyState.innerHTML = `
+      <div class="empty-state-icon">⚡</div>
+      <h3>Hash Table Not Populated Yet</h3>
+      <p>Click <strong>"1. Generate Structured Data"</strong> followed by <strong>"2. Populate Hash Table"</strong> to render the bucket array.</p>
+    `;
     el.bucketsGrid.style.display = 'none';
     el.bucketsGrid.innerHTML = '';
     el.recUserSelect.innerHTML = '<option value="">Populate table first</option>';
     el.userProfileContent.innerHTML = '<p class="empty-note">Select a user and run recommendation.</p>';
     el.recItemsList.innerHTML = '<p class="empty-note">Recommendations will appear here.</p>';
-    log('Simulator reset to initial blank state.', 'warning');
+    el.traceStepsContainer.innerHTML = '<div class="empty-state"><p>Enter a User ID and click <strong>Search & Animate</strong> to trace the hash lookup path.</p></div>';
+    el.traceKey.innerText = '-';
+    el.traceBucket.innerText = '-';
+    el.traceStatus.innerText = '-';
+    el.traceLatency.innerText = '-';
+    log('Simulator state reset on server and client.', 'warning');
   });
 
   // Search
@@ -754,7 +874,7 @@ function setupEventListeners() {
     if (e.key === 'Enter') handleSearch();
   });
   el.btnPickRandomUser.addEventListener('click', () => {
-    if (state.userList.length === 0) {
+    if (!state.tableData || state.userList.length === 0) {
       alert('Please populate the hash table first.');
       return;
     }

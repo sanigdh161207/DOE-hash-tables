@@ -43,8 +43,10 @@ class ExtendibleHashTable(AbstractHashTable):
     Extendible Hash Table implementation satisfying AbstractHashTable interface.
     Uses bitwise hash masking, dynamic bucket splitting, and directory doubling.
     """
-    def __init__(self, table_size: int = 4, bucket_capacity: int = 4):
+    def __init__(self, table_size: int = 4, bucket_capacity: int = 4, **kwargs):
         super().__init__(table_size)
+        if "capacity" in kwargs and kwargs["capacity"] is not None:
+            bucket_capacity = kwargs["capacity"]
         self.bucket_capacity = max(1, bucket_capacity)
         self.global_depth = 1
         
@@ -203,6 +205,21 @@ class ExtendibleHashTable(AbstractHashTable):
         """
         pass
 
+    def load_factor(self) -> float:
+        """
+        Calculates bucket utilization: stored records / (num_unique_buckets * bucket_capacity).
+        In Extendible Hashing, this represents true physical storage utilization.
+        """
+        visited = set(id(b) for b in self.directory)
+        total_capacity = len(visited) * self.bucket_capacity
+        return self.num_keys / float(total_capacity) if total_capacity > 0 else 0.0
+
+    def directory_load_factor(self) -> float:
+        """
+        Directory pointer density: stored records / directory size.
+        """
+        return self.num_keys / float(len(self.directory)) if len(self.directory) > 0 else 0.0
+
     def collision_count(self) -> int:
         """
         Number of entries sharing buckets with other keys.
@@ -227,13 +244,22 @@ class ExtendibleHashTable(AbstractHashTable):
                 bucket_lengths.append(len(b.items))
 
         collisions = self.collision_count()
+        num_unique = len(visited_buckets)
+        total_capacity = num_unique * self.bucket_capacity
+        bucket_utilization = self.num_keys / float(total_capacity) if total_capacity > 0 else 0.0
+
         return {
             "users": self.num_keys,
             "table_size": len(self.directory),
+            "directory_size": len(self.directory),
             "global_depth": self.global_depth,
-            "num_unique_buckets": len(visited_buckets),
+            "num_unique_buckets": num_unique,
+            "bucket_capacity": self.bucket_capacity,
+            "total_physical_capacity": total_capacity,
+            "bucket_utilization": bucket_utilization,
             "collisions": collisions,
-            "load_factor": self.num_keys / float(len(self.directory)),
+            "load_factor": bucket_utilization,
+            "directory_load_factor": self.directory_load_factor(),
             "avg_bucket_length": sum(bucket_lengths) / len(bucket_lengths) if bucket_lengths else 0.0,
             "max_bucket_length": max(bucket_lengths) if bucket_lengths else 0,
             "splits_count": self.splits_count,
