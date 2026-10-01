@@ -55,9 +55,13 @@ cd DOE-hash-tables
 pip install -r requirements.txt
 ```
 
-## Running the Application
+### Web Simulator (Local & Vercel)
+```bash
+python server.py
+# Open http://localhost:8000 in your browser
+```
 
-### GUI Simulator
+### Desktop GUI Simulator
 ```bash
 python app.py
 ```
@@ -69,8 +73,17 @@ python main.py all
 
 ### Tests
 ```bash
-pytest tests/ -v
+python -m pytest tests/ -v
 ```
+
+### Deploying to Vercel
+1. Go to [vercel.com](https://vercel.com/new).
+2. Import the GitHub repository: `https://github.com/sanigdh161207/DOE-hash-tables`.
+3. Keep default settings and click **Deploy**.
+4. Or using Vercel CLI:
+   ```bash
+   npx vercel
+   ```
 
 ---
 
