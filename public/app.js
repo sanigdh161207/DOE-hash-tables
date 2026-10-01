@@ -126,6 +126,13 @@ function switchTab(tabId) {
 
 // ── API CALLS ──
 async function apiCall(endpoint, method = 'GET', body = null) {
+  if (window.location.protocol === 'file:') {
+    const errorMsg = "Local file:// protocol detected. Please run 'python server.py' and open http://localhost:8000, or view your deployed Vercel URL.";
+    log(errorMsg, 'error');
+    alert(errorMsg);
+    throw new Error(errorMsg);
+  }
+
   try {
     const opts = {
       method,
@@ -133,10 +140,18 @@ async function apiCall(endpoint, method = 'GET', body = null) {
     };
     if (body) opts.body = JSON.stringify(body);
     
-    const resp = await fetch(`${API_BASE}${endpoint}`, opts);
+    // Primary attempt
+    let resp = await fetch(`${API_BASE}${endpoint}`, opts);
+    
+    // If 404 and endpoint starts with /api/, try stripping /api/ as fallback
+    if (resp.status === 404 && endpoint.startsWith('/api/')) {
+      const fallbackEndpoint = endpoint.replace('/api/', '/');
+      resp = await fetch(`${API_BASE}${fallbackEndpoint}`, opts);
+    }
+
     if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-      throw new Error(err.detail || `Server error: ${resp.status}`);
+      const err = await resp.json().catch(() => ({ detail: `HTTP ${resp.status} ${resp.statusText}` }));
+      throw new Error(err.detail || err.message || `Server error: ${resp.status}`);
     }
     return await resp.json();
   } catch (err) {

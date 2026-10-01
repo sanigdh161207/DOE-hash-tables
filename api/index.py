@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import math
+import traceback
 from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 
@@ -10,7 +11,8 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, APIRouter, Request, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -37,6 +39,27 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Vercel Path Normalization Middleware
+@app.middleware("http")
+async def vercel_path_fix(request: Request, call_next):
+    path = request.scope.get("path", "")
+    if path.startswith("/api/index.py"):
+        new_path = path[len("/api/index.py"):]
+        request.scope["path"] = new_path if new_path else "/"
+    return await call_next(request)
+
+# Global Exception Handler for debugging serverless errors
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    err_msg = str(exc)
+    err_trace = traceback.format_exc()
+    print(f"Error handling {request.method} {request.url.path}: {err_msg}")
+    print(err_trace)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": err_msg, "trace": err_trace, "path": request.url.path}
+    )
 
 GENRE_NAMES = {
     0: "Action",
@@ -92,9 +115,14 @@ def build_hash_table(strategy: str, size_mode: str, custom_size: int, target_lf:
 
     STATE["hash_table"] = table
     STATE["recommender"] = rec_sys
-    sparse_rec = SparseRecommender(num_movies=100)
-    sparse_rec.fit(dataset)
-    STATE["sparse_recommender"] = sparse_rec
+    try:
+        sparse_rec = SparseRecommender(num_movies=100)
+        sparse_rec.fit(dataset)
+        STATE["sparse_recommender"] = sparse_rec
+    except Exception as e:
+        print(f"Warning: SparseRecommender initialization skipped: {e}")
+        STATE["sparse_recommender"] = None
+
     STATE["selected_strategy"] = strategy
     STATE["target_lf"] = target_lf
     STATE["calculated_size"] = calculated_size
@@ -121,11 +149,14 @@ class RecommendRequest(BaseModel):
     top_n: int = 5
     algorithm: str = "Cosine Similarity"
 
-@app.get("/api/health")
+# APIRouter allows mounting both at /api and root /
+router = APIRouter()
+
+@router.get("/health")
 def health_check():
     return {"status": "ok", "message": "Hash Table Simulator API is running"}
 
-@app.get("/api/state")
+@router.get("/state")
 def get_state():
     has_dataset = STATE["dataset"] is not None
     has_table = STATE["hash_table"] is not None
@@ -139,7 +170,7 @@ def get_state():
         "target_lf": STATE["target_lf"]
     }
 
-@app.post("/api/generate-data")
+@router.post("/generate-data")
 def generate_data(req: GenerateRequest):
     dataset = ensure_dataset(n_users=req.num_users, seed=req.seed, force=True)
     genres = get_movie_genres(100, 5, seed=42)
@@ -161,7 +192,7 @@ def generate_data(req: GenerateRequest):
         "all_user_ids": [u[0] for u in dataset]
     }
 
-@app.post("/api/populate")
+@router.post("/populate")
 def populate_table(req: PopulateRequest):
     table = build_hash_table(
         strategy=req.strategy,
@@ -172,7 +203,6 @@ def populate_table(req: PopulateRequest):
         seed=req.seed
     )
     
-    # Calculate stats
     total_users = len(STATE["dataset"])
     table_size = table.size if hasattr(table, "size") else len(getattr(table, "directory", []))
     load_factor = round(table.load_factor(), 4) if hasattr(table, "load_factor") else round(total_users / max(1, table_size), 4)
@@ -196,12 +226,11 @@ def populate_table(req: PopulateRequest):
     elif isinstance(table, ExtendibleHashTable):
         memory_bytes = table.estimate_memory_bytes()
 
-    # Build bucket representation for visualizer
-    buckets_data = []
     is_extendible = isinstance(table, ExtendibleHashTable)
     
     if not is_extendible:
-        limit = min(table.size, 100) # show up to 100 buckets in visualizer
+        limit = min(table.size, 100)
+        buckets_data = []
         for idx in range(limit):
             b = table.buckets[idx]
             items = []
@@ -219,7 +248,6 @@ def populate_table(req: PopulateRequest):
                 "is_collision": len(items) > 1
             })
     else:
-        # Extendible directory representation
         buckets_data = {
             "global_depth": table.global_depth,
             "directory_size": len(table.directory),
@@ -253,7 +281,7 @@ def populate_table(req: PopulateRequest):
         "user_ids": STATE["user_ids"]
     }
 
-@app.post("/api/search")
+@router.post("/search")
 def search_key(req: SearchRequest):
     if STATE["hash_table"] is None:
         build_hash_table("Separate Chaining", "Auto", 150, 0.75, 100, 42)
@@ -276,7 +304,7 @@ def search_key(req: SearchRequest):
         "trace": trace
     }
 
-@app.post("/api/recommend")
+@router.post("/recommend")
 def get_recommendations(req: RecommendRequest):
     if STATE["recommender"] is None or STATE["hash_table"] is None:
         build_hash_table("Separate Chaining", "Auto", 150, 0.75, 100, 42)
@@ -326,7 +354,6 @@ def get_recommendations(req: RecommendRequest):
             "genre_name": GENRE_NAMES.get(g_id, "Unknown")
         })
 
-    # Fetch user's current favorite movies and genre preference
     user_items, _ = STATE["hash_table"].search(req.user_id, record_trace=False)
     user_genres = {}
     if user_items:
@@ -346,7 +373,7 @@ def get_recommendations(req: RecommendRequest):
         }
     }
 
-@app.get("/api/benchmarks/lookup")
+@router.get("/benchmarks/lookup")
 def benchmark_lookup():
     sizes = [10, 50, 100, 500, 1000]
     res = PerformanceSimulator.run_lookup_benchmark(sizes, strategy="Both")
@@ -364,7 +391,7 @@ def benchmark_lookup():
         ]
     return {"sizes": sizes, "results": formatted}
 
-@app.get("/api/benchmarks/collision")
+@router.get("/benchmarks/collision")
 def benchmark_collision():
     load_factors = [0.25, 0.50, 0.75, 0.90]
     res = PerformanceSimulator.run_collision_experiment(load_factors, strategy="Both")
@@ -382,7 +409,7 @@ def benchmark_collision():
         ]
     return {"load_factors": load_factors, "results": formatted}
 
-@app.get("/api/benchmarks/numpy")
+@router.get("/benchmarks/numpy")
 def benchmark_numpy():
     res = PerformanceSimulator.compare_numpy_performance(5000)
     return {
@@ -391,7 +418,11 @@ def benchmark_numpy():
         "speedup": round(res["speedup_numpy"], 2)
     }
 
-# Mount static files if public directory exists
+# Mount both with /api prefix and at root so Vercel routing works regardless of path stripping
+app.include_router(router, prefix="/api")
+app.include_router(router, prefix="")
+
+# Mount static files for local server.py development
 PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 if os.path.exists(PUBLIC_DIR):
     app.mount("/", StaticFiles(directory=PUBLIC_DIR, html=True), name="static")
