@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hash Table Recommender Simulator</title>
+  <meta name="description" content="Interactive Educational Hash Table & Movie Recommender Simulator with collision resolution, step-by-step search traces, and recommendation algorithms.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body class="dark-theme">
+  <div class="app-layout">
+    
+    <!-- LEFT SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="logo-group">
+          <div class="logo-icon">#</div>
+          <div class="logo-text">
+            <span class="logo-title">Hash Table</span>
+            <span class="logo-badge">SIMULATOR</span>
+          </div>
+        </div>
+        <button id="theme-toggle" class="icon-btn" title="Toggle Light/Dark Theme">🌙</button>
+      </div>
+
+      <div class="sidebar-scroll">
+        <!-- Configuration Section -->
+        <div class="config-card">
+          <div class="section-title">SIMULATOR CONFIGURATION</div>
+
+          <div class="form-group">
+            <label for="dataset-size-select">Dataset Size (Users):</label>
+            <select id="dataset-size-select" class="form-select">
+              <option value="10">10 Users</option>
+              <option value="50">50 Users</option>
+              <option value="100" selected>100 Users</option>
+              <option value="500">500 Users</option>
+              <option value="1000">1,000 Users</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="strategy-select">Backend Data Structure:</label>
+            <select id="strategy-select" class="form-select">
+              <option value="Separate Chaining" selected>Separate Chaining</option>
+              <option value="Linear Probing">Linear Probing</option>
+              <option value="Extendible Hashing">Extendible Hashing</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label>Table Sizing Mode:</label>
+            <div class="segmented-control" id="sizing-mode-group">
+              <button type="button" class="segment-btn active" data-mode="Auto">Auto</button>
+              <button type="button" class="segment-btn" data-mode="Custom">Custom</button>
+            </div>
+          </div>
+
+          <div class="form-group" id="custom-size-group" style="display: none;">
+            <label for="custom-table-size">Custom Table Size:</label>
+            <input type="number" id="custom-table-size" class="form-input" value="150" min="10" max="5000">
+          </div>
+
+          <div class="form-group" id="target-lf-group">
+            <label>Target Load Factor (Auto Mode):</label>
+            <div class="segmented-control" id="lf-segmented-group">
+              <button type="button" class="segment-btn" data-lf="0.25">0.25</button>
+              <button type="button" class="segment-btn" data-lf="0.50">0.50</button>
+              <button type="button" class="segment-btn active" data-lf="0.75">0.75</button>
+              <button type="button" class="segment-btn" data-lf="0.90">0.90</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="action-buttons-group">
+          <button id="btn-generate-data" class="action-btn primary">
+            <span class="btn-num">1</span> Generate Structured Data
+          </button>
+          <button id="btn-populate-table" class="action-btn primary">
+            <span class="btn-num">2</span> Populate Hash Table
+          </button>
+          <button id="btn-view-grid" class="action-btn">
+            <span class="btn-num">3</span> View Hash Table Grid
+          </button>
+          <button id="btn-open-rec-lab" class="action-btn success">
+            <span class="btn-num">4</span> Open Recommender Lab
+          </button>
+
+          <div class="action-divider"></div>
+
+          <div class="benchmark-title">BENCHMARK SUITE</div>
+          <button id="btn-run-lookup" class="action-btn sub">
+            ⚡ Run Lookup Benchmark
+          </button>
+          <button id="btn-run-collision" class="action-btn sub">
+            💥 Run Collision Test
+          </button>
+          <button id="btn-run-numpy" class="action-btn sub">
+            🔢 Compare NumPy bincount
+          </button>
+          <button id="btn-generate-charts" class="action-btn sub">
+            📊 Generate Charts
+          </button>
+          <button id="btn-how-it-works" class="action-btn edu">
+            💡 Educational Guide
+          </button>
+          <button id="btn-reset" class="action-btn danger">
+            🔄 Reset Simulator
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- MAIN WORKSPACE -->
+    <main class="main-content">
+      
+      <!-- TOP STATUS & METRICS BAR -->
+      <header class="metrics-bar">
+        <div class="metric-card">
+          <span class="metric-label">Users</span>
+          <span class="metric-value" id="stat-users">0</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Table Size</span>
+          <span class="metric-value" id="stat-table-size">0</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Load Factor</span>
+          <span class="metric-value" id="stat-load-factor">0.00</span>
+        </div>
+        <div class="metric-card highlight-coll">
+          <span class="metric-label">Collisions</span>
+          <span class="metric-value" id="stat-collisions">0</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Collision Rate</span>
+          <span class="metric-value" id="stat-collision-rate">0.0%</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Avg Bucket Len</span>
+          <span class="metric-value" id="stat-avg-bucket">0.0</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Max Bucket Len</span>
+          <span class="metric-value" id="stat-max-bucket">0</span>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">Memory</span>
+          <span class="metric-value" id="stat-memory">0 B</span>
+        </div>
+      </header>
+
+      <!-- TAB NAVIGATION -->
+      <nav class="tabs-nav">
+        <button class="tab-btn active" data-tab="tab-visualizer">
+          <span class="tab-icon">🗂</span> Hash Table Visualizer
+        </button>
+        <button class="tab-btn" data-tab="tab-search">
+          <span class="tab-icon">🔍</span> Search & Trace
+        </button>
+        <button class="tab-btn" data-tab="tab-recommender">
+          <span class="tab-icon">🎯</span> Recommender Lab
+        </button>
+        <button class="tab-btn" data-tab="tab-charts">
+          <span class="tab-icon">📈</span> Performance Charts
+        </button>
+        <button class="tab-btn" data-tab="tab-edu">
+          <span class="tab-icon">📖</span> Guide & Theory
+        </button>
+      </nav>
+
+      <!-- TAB CONTENT AREA -->
+      <div class="tab-body">
+        
+        <!-- 1. HASH TABLE VISUALIZER TAB -->
+        <section id="tab-visualizer" class="tab-pane active">
+          <div class="pane-header">
+            <div>
+              <h2 class="pane-title" id="vis-title">Bucket Array Visualizer</h2>
+              <p class="pane-subtitle" id="vis-subtitle">Visual representation of internal buckets, hash keys, and collision chains.</p>
+            </div>
+            <div class="vis-legend">
+              <span class="legend-pill normal"><span class="dot"></span> User Node</span>
+              <span class="legend-pill collision"><span class="dot"></span> Collision Chain</span>
+              <span class="legend-pill empty"><span class="dot"></span> Empty Slot</span>
+            </div>
+          </div>
+
+          <div class="visualizer-container" id="visualizer-container">
+            <div class="empty-state" id="vis-empty-state">
+              <div class="empty-state-icon">⚡</div>
+              <h3>Hash Table Not Populated Yet</h3>
+              <p>Click <strong>"1. Generate Structured Data"</strong> followed by <strong>"2. Populate Hash Table"</strong> to render the bucket array.</p>
+            </div>
+            <div class="buckets-grid" id="buckets-grid" style="display: none;"></div>
+          </div>
+        </section>
+
+        <!-- 2. SEARCH & TRACE TAB -->
+        <section id="tab-search" class="tab-pane">
+          <div class="pane-header">
+            <div>
+              <h2 class="pane-title">Interactive Key Lookup & Animated Trace</h2>
+              <p class="pane-subtitle">Inspect the hash computation, probe sequence, and collision resolution step-by-step.</p>
+            </div>
+          </div>
+
+          <div class="search-bar-panel">
+            <div class="search-inputs">
+              <div class="form-group inline">
+                <label for="search-key-input">User ID:</label>
+                <input type="number" id="search-key-input" class="form-input" placeholder="e.g. 1005">
+              </div>
+              <div class="form-group inline">
+                <label for="anim-speed-select">Animation Speed:</label>
+                <select id="anim-speed-select" class="form-select sm">
+                  <option value="Fast">Fast (200ms)</option>
+                  <option value="Normal" selected>Normal (500ms)</option>
+                  <option value="Slow">Slow (1000ms)</option>
+                </select>
+              </div>
+              <button id="btn-run-search" class="action-btn primary sm">Search & Animate</button>
+              <button id="btn-pick-random-user" class="action-btn sub sm">Pick Random User</button>
+            </div>
+          </div>
+
+          <div class="trace-workspace">
+            <div class="trace-summary-card" id="trace-summary-card">
+              <div class="trace-metric">
+                <span class="lbl">Lookup Key</span>
+                <span class="val" id="trace-key">-</span>
+              </div>
+              <div class="trace-metric">
+                <span class="lbl">Hash Bucket</span>
+                <span class="val" id="trace-bucket">-</span>
+              </div>
+              <div class="trace-metric">
+                <span class="lbl">Status</span>
+                <span class="val" id="trace-status">-</span>
+              </div>
+              <div class="trace-metric">
+                <span class="lbl">Search Latency</span>
+                <span class="val" id="trace-latency">-</span>
+              </div>
+            </div>
+
+            <div class="trace-steps-container" id="trace-steps-container">
+              <div class="empty-state">
+                <p>Enter a User ID and click <strong>Search & Animate</strong> to trace the hash lookup path.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. RECOMMENDER LAB TAB -->
+        <section id="tab-recommender" class="tab-pane">
+          <div class="pane-header">
+            <div>
+              <h2 class="pane-title">Recommender Lab</h2>
+              <p class="pane-subtitle">Test five collaborative filtering & hybrid algorithms backed by O(1) hash table user profiles.</p>
+            </div>
+          </div>
+
+          <div class="rec-control-panel">
+            <div class="form-group inline">
+              <label for="rec-user-select">Target User ID:</label>
+              <select id="rec-user-select" class="form-select sm">
+                <option value="">Populate table first</option>
+              </select>
+            </div>
+            <div class="form-group inline">
+              <label for="rec-top-n">Top N Movies:</label>
+              <select id="rec-top-n" class="form-select sm">
+                <option value="3">Top 3</option>
+                <option value="5" selected>Top 5</option>
+                <option value="10">Top 10</option>
+              </select>
+            </div>
+            <div class="form-group inline">
+              <label for="rec-algo-select">Algorithm:</label>
+              <select id="rec-algo-select" class="form-select sm">
+                <option value="Cosine Similarity" selected>Cosine Similarity (User-User)</option>
+                <option value="IDF-Weighted Cosine">IDF-Weighted Cosine</option>
+                <option value="Hybrid Cold-Start">Hybrid Cold-Start</option>
+                <option value="Sparse CSR Cosine">Sparse CSR Cosine</option>
+                <option value="Baseline (Random)">Baseline (Popularity / Random)</option>
+              </select>
+            </div>
+            <button id="btn-generate-recs" class="action-btn success sm">Generate Recommendations</button>
+          </div>
+
+          <div class="rec-results-grid">
+            <!-- User Profile card -->
+            <div class="rec-card profile-card">
+              <h3 class="card-heading">User Interaction Profile</h3>
+              <div id="user-profile-content">
+                <p class="empty-note">Select a user and run recommendation to inspect their watched movies & genre skew.</p>
+              </div>
+            </div>
+
+            <!-- Recommendation list card -->
+            <div class="rec-card results-card">
+              <div class="card-heading-row">
+                <h3 class="card-heading">Recommended Movies</h3>
+                <span class="latency-badge" id="rec-latency-badge">- ms</span>
+              </div>
+              <div id="rec-items-list" class="rec-items-list">
+                <p class="empty-note">Recommendations will appear here.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. PERFORMANCE CHARTS TAB -->
+        <section id="tab-charts" class="tab-pane">
+          <div class="pane-header">
+            <div>
+              <h2 class="pane-title">Performance & Scalability Benchmarks</h2>
+              <p class="pane-subtitle">Live empirical evaluations comparing Separate Chaining, Linear Probing, and NumPy vectorization.</p>
+            </div>
+            <button id="btn-refresh-charts" class="action-btn primary sm">Run Benchmark & Refresh</button>
+          </div>
+
+          <div class="charts-grid">
+            <div class="chart-container-card">
+              <div class="chart-header">
+                <h3>Lookup Latency vs Dataset Size</h3>
+                <span class="chart-tag">Time Complexity O(1)</span>
+              </div>
+              <div class="chart-wrapper">
+                <canvas id="chart-lookup"></canvas>
+              </div>
+            </div>
+
+            <div class="chart-container-card">
+              <div class="chart-header">
+                <h3>Collision Rate vs Target Load Factor</h3>
+                <span class="chart-tag">Collision Degradation</span>
+              </div>
+              <div class="chart-wrapper">
+                <canvas id="chart-collision"></canvas>
+              </div>
+            </div>
+
+            <div class="chart-container-card">
+              <div class="chart-header">
+                <h3>Memory Footprint (Bytes)</h3>
+                <span class="chart-tag">Space Complexity</span>
+              </div>
+              <div class="chart-wrapper">
+                <canvas id="chart-memory"></canvas>
+              </div>
+            </div>
+
+            <div class="chart-container-card">
+              <div class="chart-header">
+                <h3>Python List vs NumPy bincount</h3>
+                <span class="chart-tag">SIMD Vectorization</span>
+              </div>
+              <div class="chart-wrapper">
+                <canvas id="chart-numpy"></canvas>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. EDUCATIONAL GUIDE TAB -->
+        <section id="tab-edu" class="tab-pane">
+          <div class="pane-header">
+            <div>
+              <h2 class="pane-title">Educational Guide & Hash Table Theory</h2>
+              <p class="pane-subtitle">Core concepts, collision resolution mechanics, mathematical formulas, and algorithm comparisons.</p>
+            </div>
+          </div>
+
+          <div class="edu-content-grid">
+            <div class="edu-card">
+              <h3>🔑 1. Hash Function & Modulo Arithmetic</h3>
+              <p>In our implementation, each user ID is mapped to a table index using modulo arithmetic:</p>
+              <code>index = abs(hash(key)) % table_size</code>
+              <p>A good hash function distributes keys uniformly across all buckets, minimizing clustering and collisions.</p>
+            </div>
+
+            <div class="edu-card">
+              <h3>🔗 2. Separate Chaining</h3>
+              <p>Each bucket holds a linked list (or dynamic array) of key-value pairs that hash to that index. When collisions occur, items are appended to the chain.</p>
+              <div class="complexity-badge">Lookup: O(1) avg · O(N) worst case</div>
+              <p>Gracefully tolerates load factors exceeding 1.0 without running out of slots.</p>
+            </div>
+
+            <div class="edu-card">
+              <h3>➡️ 3. Linear Probing (Open Addressing)</h3>
+              <p>All records reside directly in the table array. When a collision occurs at bucket <code>i</code>, the algorithm probes successive slots <code>(i + 1) % size</code> until an empty slot is found.</p>
+              <div class="complexity-badge">Lookup: O(1) avg · Severe clustering if &lambda; &gt; 0.75</div>
+              <p>Requires &lambda; &lt; 1.0. High load factors cause primary clustering where contiguous blocks form.</p>
+            </div>
+
+            <div class="edu-card">
+              <h3>🌳 4. Extendible Hashing</h3>
+              <p>A dynamic hashing strategy designed for secondary storage and scalable indexing. Uses a directory of pointers of depth <code>d</code> pointing to buckets of capacity <code>c</code> with local depth <code>p</code>.</p>
+              <div class="complexity-badge">Splits only the overflowing bucket, doubling directory if needed</div>
+              <p>Avoids full rehashing of the entire dataset during expansion.</p>
+            </div>
+
+            <div class="edu-card">
+              <h3>📐 5. Cosine Similarity vs IDF Weighting</h3>
+              <p>User similarity is calculated over binary interaction vectors:</p>
+              <code>Cosine(u, v) = (u · v) / (||u|| * ||v||)</code>
+              <p><strong>IDF weighting</strong> penalizes universally popular blockbuster movies, prioritizing niche shared interests.</p>
+            </div>
+
+            <div class="edu-card">
+              <h3>❄️ 6. Cold-Start Handling</h3>
+              <p>New users with few interactions produce sparse vectors with zero overlap. Our <strong>Hybrid Cold-Start</strong> algorithm switches to genre-frequency preference fallback to guarantee high-quality recommendations.</p>
+            </div>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- BOTTOM LIVE EXECUTION CONSOLE -->
+      <footer class="console-panel" id="console-panel">
+        <div class="console-header">
+          <div class="console-left">
+            <span class="prompt-symbol">&gt;_</span>
+            <span class="console-title">EXECUTION CONSOLE & LIVE LOGS</span>
+            <span class="pulse-dot"></span>
+            <span class="status-live">LIVE</span>
+            <span class="log-count" id="log-count">0 events</span>
+          </div>
+          <div class="console-right">
+            <input type="text" id="console-filter" class="console-search" placeholder="Filter logs...">
+            <button id="btn-copy-console" class="console-btn" title="Copy console text">📋 Copy</button>
+            <button id="btn-clear-console" class="console-btn" title="Clear console">🗑 Clear</button>
+          </div>
+        </div>
+        <div class="console-body" id="console-body">
+          <div class="log-line system">[SYSTEM] Hash Table Recommender Simulator initialized and ready.</div>
+        </div>
+      </footer>
+
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
